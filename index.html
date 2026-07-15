@@ -86,7 +86,7 @@
     border-radius:20px;padding:7px 12px;font-size:13px;white-space:nowrap;}
   #readerToolbar button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
   #reader[dir="rtl"]{direction:rtl;text-align:right;}
-  .w-de.pointer-current{outline:3px solid var(--accent);outline-offset:1px;}
+  .w-de.pointer-current, .ptr-word.pointer-current{outline:3px solid var(--accent);outline-offset:1px;border-radius:3px;}
 
   #pointerBar{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
     background:var(--panel);border-radius:16px;padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.5);
@@ -135,7 +135,7 @@
           <span><i class="dot" style="background:var(--cream)"></i>7-12 veces</span>
           <span>13+ = ya dominada, sin resaltar</span>
         </div>
-        <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra (porque no la reconociste) — no por el simple hecho de leerla.</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra (porque no la reconociste) — no por el simple hecho de leerla. Se asume que todo el libro está en el idioma elegido, y no se resaltan las ~300 palabras más comunes de ese idioma (asumimos que esas ya las sabes).</div>
       </div>
       <div class="card">
         <div class="biglabel">Practicar</div>

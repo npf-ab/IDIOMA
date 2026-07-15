@@ -139,19 +139,20 @@ reviewLangFilter.innerHTML = `<option value="">Todos los idiomas</option>` +
   Object.entries(LANGUAGES).map(([code,l])=>`<option value="${code}">${l.label}</option>`).join('');
 
 /* ===================== Diccionarios de idioma ===================== */
-let esSet = null;
+let esSet = null; // ya no se usa para filtrar, se deja por compatibilidad si se necesita en el futuro
 const dictCache = {};
-async function loadEsDict(){
-  if (esSet) return esSet;
-  esSet = new Set(await fetch('data/es-words.json').then(r=>r.json()));
-  return esSet;
-}
+// Las palabras MÁS comunes de cualquier idioma (artículos, pronombres, conjunciones, verbos
+// auxiliares...) casi seguro ya las conoces — resaltarlas solo ensucia la pantalla. Las excluimos.
+// Todo lo demás se asume del idioma seleccionado (ya no comparamos contra español).
+const SKIP_TOP_N = 300;
+
 async function loadTargetDict(langCode){
   if (dictCache[langCode]) return dictCache[langCode];
   const arr = await fetch('data/' + LANGUAGES[langCode].file).then(r=>r.json());
-  const set = new Set(arr);
+  const set = new Set(arr);               // vocabulario completo (para segmentar chino/japonés)
+  const commonSet = new Set(arr.slice(0, SKIP_TOP_N)); // palabras comunes a NO resaltar
   const maxLen = arr.reduce((m,w)=>Math.max(m,w.length), 1);
-  dictCache[langCode] = { set, maxLen };
+  dictCache[langCode] = { set, commonSet, maxLen };
   return dictCache[langCode];
 }
 
@@ -232,7 +233,7 @@ function wordHtml(word, key, sessionCounts){
   return `<span class="w-de" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
 }
 
-function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, script){
+function buildSentenceHtml(sentence, sessionCounts, dict, langCode, script){
   let html = '';
   if (script === 'cjk'){
     let lastIndex = 0, m;
@@ -241,8 +242,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, scr
       if (m.index > lastIndex) html += escapeHtml(sentence.slice(lastIndex, m.index));
       const tokens = segmentCJKRun(m[0], dict);
       tokens.forEach(tok=>{
-        if (dict.set.has(tok)) html += wordHtml(tok, tok, sessionCounts);
-        else html += escapeHtml(tok);
+        html += dict.commonSet.has(tok) ? escapeHtml(tok) : wordHtml(tok, tok, sessionCounts);
       });
       lastIndex = m.index + m[0].length;
     }
@@ -258,7 +258,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, scr
     const start = m.index, end = start + word.length;
     if (start > lastIndex) html += escapeHtml(sentence.slice(lastIndex, start));
     const key = normalize(word);
-    if (key.length >= 2 && !esWords.has(key) && dict.set.has(key)){
+    if (key.length >= 2 && !dict.commonSet.has(key)){
       html += wordHtml(word, key, sessionCounts);
     } else {
       html += escapeHtml(word);
@@ -269,7 +269,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, scr
   return html;
 }
 
-function highlightHtmlChunk(html, sessionCounts, dict, esWords, langCode, script){
+function highlightHtmlChunk(html, sessionCounts, dict, langCode, script){
   const container = document.createElement('div');
   container.innerHTML = html;
   let blocks = Array.from(container.querySelectorAll(BLOCK_SELECTOR));
@@ -280,7 +280,7 @@ function highlightHtmlChunk(html, sessionCounts, dict, esWords, langCode, script
     if (!text || !text.trim()) return;
     const sentences = splitSentences(text);
     el.innerHTML = sentences.map(s=>{
-      const inner = buildSentenceHtml(s, sessionCounts, dict, esWords, langCode, script);
+      const inner = buildSentenceHtml(s, sessionCounts, dict, langCode, script);
       return `<span class="sentence">${inner}</span>`;
     }).join('');
   });
@@ -293,12 +293,12 @@ async function importEpub(file){
   const script = LANGUAGES[langCode].script;
   showLoading('Leyendo el EPUB…');
   try{
-    const [dict, esWords] = await Promise.all([loadTargetDict(langCode), loadEsDict()]);
+    const dict = await loadTargetDict(langCode);
     const { title, htmlChunks } = await parseEpub(file);
     showLoading('Detectando palabras en ' + LANGUAGES[langCode].label + '…');
 
     const sessionCounts = {};
-    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, dict, esWords, langCode, script));
+    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, dict, langCode, script));
     // Ya NO sumamos estas ocurrencias al progreso automáticamente: el conteo (y el color)
     // solo sube cuando TÚ tocas la palabra mientras lees (ver el listener de clic más abajo).
 
@@ -634,6 +634,46 @@ document.getElementById('pointerPlayPause').addEventListener('click', ()=>{
   else startPointerFromView();
 });
 
+// Coincide con letras de casi cualquier alfabeto (incluye chino/japonés como bloques, no palabra por palabra)
+const GENERIC_WORD_RE = /[\p{L}\p{M}]+/gu;
+
+// Envuelve temporalmente cada palabra "normal" (no resaltada) en un span para poder
+// apuntarla con el puntero también. Se deshace con unwrapPointerWords().
+function wrapWordsForPointer(root){
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  let n;
+  while ((n = walker.nextNode())){
+    if (n.parentElement && n.parentElement.classList.contains('w-de')) continue; // ya es una unidad clickeable
+    if (!n.nodeValue || !n.nodeValue.trim()) continue;
+    textNodes.push(n);
+  }
+  textNodes.forEach(node=>{
+    const text = node.nodeValue;
+    GENERIC_WORD_RE.lastIndex = 0;
+    if (!GENERIC_WORD_RE.test(text)) return;
+    GENERIC_WORD_RE.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let lastIndex = 0, m;
+    while ((m = GENERIC_WORD_RE.exec(text))){
+      if (m.index > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
+      const span = document.createElement('span');
+      span.className = 'ptr-word';
+      span.textContent = m[0];
+      frag.appendChild(span);
+      lastIndex = m.index + m[0].length;
+    }
+    if (lastIndex < text.length) frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+function unwrapPointerWords(){
+  readerEl.querySelectorAll('.ptr-word').forEach(span=>{
+    span.replaceWith(document.createTextNode(span.textContent));
+  });
+  readerEl.normalize();
+}
+
 function startPointerFromView(){
   const readerRect = screens.reader.getBoundingClientRect();
   const allSentences = Array.from(readerEl.querySelectorAll('.sentence'));
@@ -643,10 +683,12 @@ function startPointerFromView(){
   });
   const startFrom = visible.length ? visible : allSentences;
 
+  startFrom.forEach(sentEl=> wrapWordsForPointer(sentEl));
+
   pointerWords = [];
-  startFrom.forEach(sentEl=> pointerWords.push(...Array.from(sentEl.querySelectorAll('.w-de'))));
+  startFrom.forEach(sentEl=> pointerWords.push(...Array.from(sentEl.querySelectorAll('.w-de, .ptr-word'))));
   if (pointerWords.length === 0){
-    alert('No encontré palabras resaltadas visibles en esta pantalla para seguir con el puntero.');
+    alert('No encontré texto visible en esta pantalla para leer con el puntero.');
     return;
   }
   pointerIdx = 0;
@@ -681,6 +723,7 @@ function stopPointer(){
   if (pointerCurrentEl) pointerCurrentEl.classList.remove('pointer-current');
   pointerCurrentEl = null;
   pointerWords = []; pointerIdx = 0;
+  unwrapPointerWords();
   pointerBar.classList.remove('show');
   document.getElementById('pointerPlayPause').textContent = '▶️ Iniciar en esta página';
 }
