@@ -1,7 +1,9 @@
-const CACHE = 'lector-de-v1';
+const CACHE = 'lector-de-v2';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
-  './data/de-words.json', './data/es-words.json',
+  './data/es-words.json',
+  './data/de-words.json', './data/en-words.json', './data/fr-words.json',
+  './data/it-words.json', './data/pt-words.json',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
 ];
 

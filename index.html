@@ -36,6 +36,10 @@
   input[type=file]{display:none;}
   .btn{display:inline-block;background:var(--accent);color:#fff;border:none;
     border-radius:12px;padding:12px 20px;font-size:16px;font-weight:600;margin-top:12px;}
+  select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:12px;font-size:16px;-webkit-appearance:none;appearance:none;}
+  .book-lang-tag{display:inline-block;font-size:11px;background:var(--border);color:var(--sub);
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
   .booklist-item{display:flex;justify-content:space-between;align-items:center;
     padding:12px 4px;border-bottom:1px solid var(--border);}
   .booklist-item:last-child{border-bottom:none;}
@@ -80,6 +84,10 @@
   <div id="screens">
     <div id="home" class="screen active">
       <div class="card">
+        <div class="biglabel">Idioma a detectar</div>
+        <select id="langSelect"></select>
+      </div>
+      <div class="card">
         <div class="biglabel">Agregar un EPUB</div>
         <div id="dropzone">
           <div>Toca para elegir un archivo .epub</div>
@@ -112,9 +120,13 @@
 <div id="popup">
   <div class="word" id="popWord"></div>
   <div class="count" id="popCount"></div>
+  <div class="count" id="popTranslation">Traduciendo…</div>
   <div class="row">
-    <button id="popSpeak">🔊 Escuchar</button>
-    <button class="close" id="popClose">Cerrar</button>
+    <button id="popSpeak">🔊 Palabra</button>
+    <button id="popSpeakSentence">🔊 Frase completa</button>
+  </div>
+  <div class="row">
+    <button class="close" id="popClose" style="flex:1">Cerrar</button>
   </div>
 </div>
 
