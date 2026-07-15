@@ -695,7 +695,7 @@ let pointerActive = false, pointerTimer = null, pointerIdx = 0, pointerCurrentEl
 let pointerAllUnits = []; // TODAS las palabras del libro (resaltadas o no), en orden, listas para tocar y saltar ahí
 let pointerWrapped = false;
 
-pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = pointerSpeed.value + ' ppm');
+pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = parseFloat(pointerSpeed.value).toFixed(2) + 'x');
 pointerBtn.addEventListener('click', ()=>{
   const willShow = !pointerBar.classList.contains('show');
   pointerBar.classList.toggle('show');
@@ -804,12 +804,26 @@ function stepPointer(){
   el.classList.add('pointer-current');
   pointerCurrentEl = el;
   el.scrollIntoView({ block:'center', behavior:'smooth' });
-  speak(el.textContent, currentBookLang, 0.85);
-
-  const ppm = parseInt(pointerSpeed.value, 10) || 110;
-  const msPerWord = 60000 / ppm;
   pointerIdx += 1;
-  pointerTimer = setTimeout(stepPointer, msPerWord);
+
+  const rate = parseFloat(pointerSpeed.value) || 0.85;
+  const utter = speak(el.textContent, currentBookLang, rate);
+
+  // Avanzamos cuando la voz TERMINA de pronunciar la palabra (no con un cronómetro fijo,
+  // que era lo que cortaba el audio a la mitad). Si el navegador no avisa (a veces pasa
+  // en Safari), un límite de seguridad evita que el puntero se quede trabado.
+  let advanced = false;
+  const advanceOnce = ()=>{
+    if (advanced) return;
+    advanced = true;
+    clearTimeout(pointerTimer);
+    if (pointerActive) stepPointer();
+  };
+  if (utter){
+    utter.onend = advanceOnce;
+    utter.onerror = advanceOnce;
+  }
+  pointerTimer = setTimeout(advanceOnce, 3500);
 }
 function pausePointer(){
   pointerActive = false;
