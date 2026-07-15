@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1c1c1e">
+<title>Lector de Alemán</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#1c1c1e; --panel:#2c2c2e; --text:#f2f2f7; --sub:#9a9aa2;
+    --accent:#5e9eff; --orange:#ff9f43; --yellow:#ffe08a; --cream:#f4ead0;
+    --border:#3a3a3c;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;}
+  #app{display:flex;flex-direction:column;height:100dvh;}
+  header{padding:14px 16px calc(10px + env(safe-area-inset-top)/3);
+    display:flex;align-items:center;justify-content:space-between;
+    border-bottom:1px solid var(--border);background:var(--panel);
+    padding-top:calc(env(safe-area-inset-top) + 10px);}
+  header h1{font-size:17px;font-weight:600;margin:0;}
+  header button{background:none;border:none;color:var(--accent);font-size:15px;padding:4px 8px;}
+  #screens{flex:1;overflow:hidden;position:relative;}
+  .screen{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;}
+  .screen.active{display:block;}
+  #home{padding:20px 16px 40px;}
+  .card{background:var(--panel);border-radius:14px;padding:18px;margin-bottom:14px;}
+  .biglabel{font-size:13px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+  #dropzone{border:2px dashed var(--border);border-radius:14px;padding:30px 16px;text-align:center;color:var(--sub);}
+  #dropzone.drag{border-color:var(--accent);color:var(--accent);}
+  input[type=file]{display:none;}
+  .btn{display:inline-block;background:var(--accent);color:#fff;border:none;
+    border-radius:12px;padding:12px 20px;font-size:16px;font-weight:600;margin-top:12px;}
+  .booklist-item{display:flex;justify-content:space-between;align-items:center;
+    padding:12px 4px;border-bottom:1px solid var(--border);}
+  .booklist-item:last-child{border-bottom:none;}
+  .booklist-item .title{font-size:15px;}
+  .booklist-item .meta{font-size:12px;color:var(--sub);}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:6px;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+  #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;}
+  #reader p{margin:0 0 1em;}
+  .w-de{border-radius:4px;padding:1px 2px;cursor:pointer;}
+  .lvl-0,.lvl-1{background:var(--orange);color:#1c1c1e;}
+  .lvl-2{background:var(--yellow);color:#1c1c1e;}
+  .lvl-3{background:var(--cream);color:#1c1c1e;}
+  #stats{padding:16px;}
+  .statrow{display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border);font-size:15px;}
+  #popup{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.5);
+    display:none;z-index:50;}
+  #popup.show{display:block;}
+  #popup .word{font-size:22px;font-weight:700;}
+  #popup .count{color:var(--sub);font-size:13px;margin-top:2px;}
+  #popup .row{display:flex;gap:10px;margin-top:12px;}
+  #popup button{flex:1;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px;font-size:15px;}
+  #popup .close{background:var(--border);color:var(--text);}
+  #loading{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+    align-items:center;justify-content:center;z-index:100;color:#fff;font-size:15px;flex-direction:column;gap:10px;}
+  #loading.show{display:flex;}
+  .spinner{width:28px;height:28px;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty{color:var(--sub);text-align:center;padding:40px 20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="backBtn" style="visibility:hidden">‹ Libros</button>
+    <h1 id="headerTitle">Mis libros</h1>
+    <button id="statsBtn">Progreso</button>
+  </header>
+
+  <div id="screens">
+    <div id="home" class="screen active">
+      <div class="card">
+        <div class="biglabel">Agregar un EPUB</div>
+        <div id="dropzone">
+          <div>Toca para elegir un archivo .epub</div>
+          <label class="btn" for="fileInput">Elegir archivo</label>
+          <input type="file" id="fileInput" accept=".epub,application/epub+zip">
+        </div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--orange)"></i>Nueva (0-1 veces)</span>
+          <span><i class="dot" style="background:var(--yellow)"></i>2-6 veces</span>
+          <span><i class="dot" style="background:var(--cream)"></i>7-12 veces</span>
+          <span>13+ = ya dominada, sin resaltar</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Tus libros</div>
+        <div id="bookList"><div class="empty">Aún no has agregado ningún libro.</div></div>
+      </div>
+    </div>
+
+    <div id="readerScreen" class="screen">
+      <div id="reader"></div>
+    </div>
+
+    <div id="statsScreen" class="screen">
+      <div id="stats"></div>
+    </div>
+  </div>
+</div>
+
+<div id="popup">
+  <div class="word" id="popWord"></div>
+  <div class="count" id="popCount"></div>
+  <div class="row">
+    <button id="popSpeak">🔊 Escuchar</button>
+    <button class="close" id="popClose">Cerrar</button>
+  </div>
+</div>
+
+<div id="loading"><div class="spinner"></div><div id="loadingText">Procesando…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
