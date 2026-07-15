@@ -399,6 +399,8 @@ async function openReader(id){
   readerEl.innerHTML = chunks.join('<hr style="border:none;border-top:1px solid var(--border);margin:2em 0;">');
   readerEl.setAttribute('dir', (LANGUAGES[currentBookLang]||{}).rtl ? 'rtl' : 'ltr');
   applyHighlighting();
+  pointerWrapped = false;
+  pointerAllUnits = [];
   showScreen('reader', meta.title);
   requestAnimationFrame(()=>{ screens.reader.scrollTop = meta.scrollPos || 0; });
 }
@@ -624,27 +626,40 @@ const pointerBar = document.getElementById('pointerBar');
 const pointerBtn = document.getElementById('pointerBtn');
 const pointerSpeed = document.getElementById('pointerSpeed');
 const pointerSpeedLabel = document.getElementById('pointerSpeedLabel');
-let pointerActive = false, pointerTimer = null, pointerWords = [], pointerIdx = 0, pointerCurrentEl = null;
+let pointerActive = false, pointerTimer = null, pointerIdx = 0, pointerCurrentEl = null;
+let pointerAllUnits = []; // TODAS las palabras del libro (resaltadas o no), en orden, listas para tocar y saltar ahí
+let pointerWrapped = false;
 
 pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = pointerSpeed.value + ' ppm');
-pointerBtn.addEventListener('click', ()=> pointerBar.classList.toggle('show'));
+pointerBtn.addEventListener('click', ()=>{
+  const willShow = !pointerBar.classList.contains('show');
+  pointerBar.classList.toggle('show');
+  if (willShow) ensurePointerWrapped();
+});
 document.getElementById('pointerStop').addEventListener('click', stopPointer);
 document.getElementById('pointerPlayPause').addEventListener('click', ()=>{
   if (pointerActive) pausePointer();
   else startPointerFromView();
 });
 
-// Coincide con letras de casi cualquier alfabeto (incluye chino/japonés como bloques, no palabra por palabra)
+// Coincide con letras de casi cualquier alfabeto
 const GENERIC_WORD_RE = /[\p{L}\p{M}]+/gu;
 
-// Envuelve temporalmente cada palabra "normal" (no resaltada) en un span para poder
-// apuntarla con el puntero también. Se deshace con unwrapPointerWords().
+// Envuelve TODAS las palabras del libro abierto en spans tocables (una sola vez por libro),
+// para poder tocar cualquiera y que el puntero empiece justo ahí.
+function ensurePointerWrapped(){
+  if (pointerWrapped) return;
+  wrapWordsForPointer(readerEl);
+  pointerAllUnits = Array.from(readerEl.querySelectorAll('.w-de, .ptr-word'));
+  pointerWrapped = true;
+}
+
 function wrapWordsForPointer(root){
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   const textNodes = [];
   let n;
   while ((n = walker.nextNode())){
-    if (n.parentElement && n.parentElement.classList.contains('w-de')) continue; // ya es una unidad clickeable
+    if (n.parentElement && n.parentElement.classList.contains('w-de')) continue;
     if (!n.nodeValue || !n.nodeValue.trim()) continue;
     textNodes.push(n);
   }
@@ -672,26 +687,45 @@ function unwrapPointerWords(){
     span.replaceWith(document.createTextNode(span.textContent));
   });
   readerEl.normalize();
+  pointerWrapped = false;
+  pointerAllUnits = [];
+}
+
+// Toca cualquier palabra del libro (con el puntero abierto) para empezar a leer justo desde ahí.
+readerEl.addEventListener('click', (e)=>{
+  if (!pointerBar.classList.contains('show')) return;
+  const unit = e.target.closest('.w-de, .ptr-word');
+  if (!unit) return;
+  e.stopPropagation();
+  jumpPointerTo(unit);
+}, true); // captura: se evalúa antes que el listener de traducción, para no abrir el popup también
+
+function jumpPointerTo(unit){
+  const idx = pointerAllUnits.indexOf(unit);
+  if (idx === -1) return;
+  clearTimeout(pointerTimer);
+  if (pointerCurrentEl) pointerCurrentEl.classList.remove('pointer-current');
+  pointerIdx = idx;
+  pointerActive = true;
+  document.getElementById('pointerPlayPause').textContent = '⏸️ Pausar';
+  stepPointer();
 }
 
 function startPointerFromView(){
-  const readerRect = screens.reader.getBoundingClientRect();
-  const allSentences = Array.from(readerEl.querySelectorAll('.sentence'));
-  const visible = allSentences.filter(s=>{
-    const r = s.getBoundingClientRect();
-    return r.bottom > readerRect.top && r.top < readerRect.bottom;
-  });
-  const startFrom = visible.length ? visible : allSentences;
-
-  startFrom.forEach(sentEl=> wrapWordsForPointer(sentEl));
-
-  pointerWords = [];
-  startFrom.forEach(sentEl=> pointerWords.push(...Array.from(sentEl.querySelectorAll('.w-de, .ptr-word'))));
-  if (pointerWords.length === 0){
-    alert('No encontré texto visible en esta pantalla para leer con el puntero.');
+  ensurePointerWrapped();
+  if (pointerAllUnits.length === 0){
+    alert('No encontré texto en este libro para leer con el puntero.');
     return;
   }
-  pointerIdx = 0;
+  const readerRect = screens.reader.getBoundingClientRect();
+  // Empieza en la primera palabra visible desde arriba de la pantalla actual
+  let startIdx = pointerAllUnits.findIndex(el=>{
+    const r = el.getBoundingClientRect();
+    return r.bottom > readerRect.top;
+  });
+  if (startIdx === -1) startIdx = 0;
+
+  pointerIdx = startIdx;
   pointerActive = true;
   document.getElementById('pointerPlayPause').textContent = '⏸️ Pausar';
   stepPointer();
@@ -700,8 +734,8 @@ function startPointerFromView(){
 function stepPointer(){
   if (!pointerActive) return;
   if (pointerCurrentEl) pointerCurrentEl.classList.remove('pointer-current');
-  if (pointerIdx >= pointerWords.length){ stopPointer(); return; }
-  const el = pointerWords[pointerIdx];
+  if (pointerIdx >= pointerAllUnits.length){ stopPointer(); return; }
+  const el = pointerAllUnits[pointerIdx];
   el.classList.add('pointer-current');
   pointerCurrentEl = el;
   el.scrollIntoView({ block:'center', behavior:'smooth' });
@@ -722,8 +756,7 @@ function stopPointer(){
   clearTimeout(pointerTimer);
   if (pointerCurrentEl) pointerCurrentEl.classList.remove('pointer-current');
   pointerCurrentEl = null;
-  pointerWords = []; pointerIdx = 0;
-  unwrapPointerWords();
+  pointerIdx = 0;
   pointerBar.classList.remove('show');
   document.getElementById('pointerPlayPause').textContent = '▶️ Iniciar en esta página';
 }
