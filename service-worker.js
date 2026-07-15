@@ -1,10 +1,14 @@
-const CACHE = 'lector-de-v11';
+const CACHE = 'lector-de-v13';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
   './data/de-words.json', './data/fr-words.json', './data/it-words.json',
   './data/pt_br-words.json', './data/nl-words.json', './data/ru-words.json',
   './data/ko-words.json', './data/he-words.json', './data/fa-words.json',
   './data/zh-words.json', './data/ja-words.json',
+  './data/verbs-de.json', './data/verbs-fr.json', './data/verbs-it.json',
+  './data/verbs-pt.json', './data/verbs-nl.json',
+  './data/expr-de.json', './data/expr-fr.json', './data/expr-it.json',
+  './data/expr-pt.json', './data/expr-nl.json',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
 ];
 

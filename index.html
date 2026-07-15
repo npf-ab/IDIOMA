@@ -107,6 +107,33 @@
     padding:10px 4px;border-bottom:1px solid var(--border);font-size:14px;}
   .bookmark-item:last-child{border-bottom:none;}
   .bookmark-item button{background:none;border:none;color:#ff6b6b;font-size:13px;}
+
+  .srs-card{background:var(--panel);border-radius:16px;padding:40px 20px;text-align:center;margin-bottom:20px;min-height:180px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .srs-word{font-size:28px;font-weight:700;margin-bottom:10px;}
+  .srs-answer{font-size:18px;color:var(--accent);margin-top:14px;}
+  .srs-progress{font-size:13px;color:var(--sub);text-align:center;margin-bottom:10px;}
+  .srs-rate-row{display:flex;gap:8px;}
+  .srs-rate-row button{flex:1;border:none;border-radius:12px;padding:14px 6px;font-size:14px;font-weight:600;color:#fff;}
+  .srs-again{background:#e74c3c;}
+  .srs-hard{background:#e67e22;}
+  .srs-good{background:#27ae60;}
+  .srs-easy{background:#2980b9;}
+  .srs-show{width:100%;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:600;}
+
+  .verb-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:16px;cursor:pointer;}
+  .verb-item:last-child{border-bottom:none;}
+  .conj-table{width:100%;border-collapse:collapse;margin-top:10px;}
+  .conj-table th{text-align:left;color:var(--sub);font-size:12px;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border);}
+  .conj-table td{padding:6px 8px;border-bottom:1px solid var(--border);font-size:14px;}
+  .conj-table .pcell{color:var(--sub);width:80px;}
+  .conj-table td button{background:none;border:none;color:var(--accent);font-size:14px;padding:2px 6px;}
+  .back-link{color:var(--accent);font-size:14px;margin-bottom:12px;display:inline-block;}
+  .expr-item{padding:12px 4px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .expr-item:last-child{border-bottom:none;}
+  .expr-item .ep{font-size:15px;font-weight:600;}
+  .expr-item .et{font-size:13px;color:var(--sub);}
+  .expr-item button{background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 12px;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -138,6 +165,24 @@
           <span>13+ (o 20+ si es común) = dominada, sin resaltar</span>
         </div>
         <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra. Las ~300 palabras más comunes del idioma se marcan en azul y necesitan 20 toques para dejar de resaltarse (en vez de 13).</div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Verbos y expresiones (alemán, francés, italiano, portugués, holandés)</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="vocabLangSelect"></select>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <button class="btn-secondary" id="openVerbsBtn">📖 Verbos</button>
+          <button class="btn-secondary" id="openExprBtn">💬 Expresiones</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Repetición espaciada (top 3000)</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="srsLangSelect" style="flex:1"></select>
+          <button class="btn" id="openSrsBtn" style="margin-top:0;white-space:nowrap;">📇 Repasar</button>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Tarjetas estilo Anki con las 3000 palabras más usadas del idioma, sin importar si ya las viste en un libro.</div>
       </div>
       <div class="card">
         <div class="biglabel">Practicar</div>
@@ -177,6 +222,18 @@
     <div id="reviewScreen" class="screen">
       <div id="reviewList" style="padding:16px;"></div>
     </div>
+
+    <div id="srsScreen" class="screen">
+      <div id="srsContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="verbsScreen" class="screen">
+      <div id="verbsContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="exprScreen" class="screen">
+      <div id="exprContent" style="padding:16px;"></div>
+    </div>
   </div>
 </div>
 
@@ -197,11 +254,11 @@
 </div>
 
 <div id="pointerBar">
-  <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">👆 Toca cualquier palabra del texto para que el puntero empiece a leer justo desde ahí.</div>
+  <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">👆 Toca cualquier palabra del texto para que el puntero empiece a leer justo desde ahí. (Solo resalta visualmente, sin voz.)</div>
   <div class="prow">
     <label>Velocidad</label>
-    <input type="range" id="pointerSpeed" min="0.4" max="1.4" value="0.85" step="0.1">
-    <label id="pointerSpeedLabel">0.85x</label>
+    <input type="range" id="pointerSpeed" min="80" max="400" value="220" step="10">
+    <label id="pointerSpeedLabel">220 ppm</label>
   </div>
   <div class="prow">
     <button id="pointerPlayPause">▶️ Iniciar en esta página</button>

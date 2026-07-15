@@ -138,6 +138,17 @@ const reviewLangFilter = document.getElementById('reviewLangFilter');
 reviewLangFilter.innerHTML = `<option value="">Todos los idiomas</option>` +
   Object.entries(LANGUAGES).map(([code,l])=>`<option value="${code}">${l.label}</option>`).join('');
 
+const srsLangSelect = document.getElementById('srsLangSelect');
+srsLangSelect.innerHTML = Object.entries(LANGUAGES).map(([code,l])=>
+  `<option value="${code}">${l.label}</option>`).join('');
+srsLangSelect.value = langSelect.value;
+
+// Verbos y expresiones solo existen para estos 5 idiomas (los de mayor confianza)
+const VOCAB_LANGS = ['de','fr','it','pt','nl'];
+const vocabLangSelect = document.getElementById('vocabLangSelect');
+vocabLangSelect.innerHTML = VOCAB_LANGS.map(code=>`<option value="${code}">${LANGUAGES[code].label}</option>`).join('');
+vocabLangSelect.value = VOCAB_LANGS.includes(langSelect.value) ? langSelect.value : 'de';
+
 /* ===================== Diccionarios de idioma ===================== */
 let esSet = null; // ya no se usa para filtrar, se deja por compatibilidad si se necesita en el futuro
 const dictCache = {};
@@ -152,7 +163,7 @@ async function loadTargetDict(langCode){
   const set = new Set(arr);               // vocabulario completo (para segmentar chino/japonés)
   const commonSet = new Set(arr.slice(0, SKIP_TOP_N)); // palabras comunes a NO resaltar
   const maxLen = arr.reduce((m,w)=>Math.max(m,w.length), 1);
-  dictCache[langCode] = { set, commonSet, maxLen };
+  dictCache[langCode] = { arr, set, commonSet, maxLen };
   return dictCache[langCode];
 }
 
@@ -345,7 +356,10 @@ const screens = {
   home: document.getElementById('home'),
   reader: document.getElementById('readerScreen'),
   stats: document.getElementById('statsScreen'),
-  review: document.getElementById('reviewScreen')
+  review: document.getElementById('reviewScreen'),
+  srs: document.getElementById('srsScreen'),
+  verbs: document.getElementById('verbsScreen'),
+  expr: document.getElementById('exprScreen')
 };
 const headerTitle = document.getElementById('headerTitle');
 const backBtn = document.getElementById('backBtn');
@@ -558,6 +572,197 @@ async function renderReview(){
   showScreen('review', 'Practicar');
 }
 
+/* ===================== Repetición espaciada (top 3000 palabras, estilo Anki) ===================== */
+// Guardamos, por "lang:palabra", el estado de repaso: {interval (días), ease, due (timestamp), reps}
+let srsCards = DB.get('srsCards', {});
+function saveSrs(){ DB.set('srsCards', srsCards); }
+
+function srsSchedule(card, rating){ // rating: 0=otra vez,1=difícil,2=bien,3=fácil
+  if (rating === 0){
+    card.reps = 0;
+    card.interval = 0;
+    card.ease = Math.max(1.3, card.ease - 0.2);
+    card.due = Date.now() + 10*60*1000; // vuelve a aparecer en 10 minutos
+    return;
+  }
+  card.reps = (card.reps || 0) + 1;
+  if (card.reps === 1) card.interval = 1;
+  else if (card.reps === 2) card.interval = 3;
+  else card.interval = Math.max(1, Math.round(card.interval * card.ease));
+
+  if (rating === 1){ card.ease = Math.max(1.3, card.ease - 0.15); card.interval = Math.max(1, Math.round(card.interval*0.8)); }
+  if (rating === 3){ card.ease = card.ease + 0.15; card.interval = Math.round(card.interval*1.3); }
+  card.due = Date.now() + card.interval*24*60*60*1000;
+}
+
+let srsSession = { lang: 'de', queue: [], idx: 0, revealed: false };
+
+document.getElementById('openSrsBtn').addEventListener('click', startSrsSession);
+
+async function startSrsSession(){
+  const lang = srsLangSelect.value;
+  showLoading('Preparando repaso de ' + LANGUAGES[lang].label + '…');
+  const dict = await loadTargetDict(lang);
+  const top3000 = dict.arr.slice(0, 3000);
+
+  const now = Date.now();
+  const due = top3000.filter(w=>{
+    const c = srsCards[lang + ':' + w];
+    return !c || c.due <= now;
+  });
+  // Nuevas primero pocas por sesión para no abrumar; máximo 30 tarjetas por sesión
+  due.sort((a,b)=>{
+    const ca = srsCards[lang+':'+a], cb = srsCards[lang+':'+b];
+    return (ca?1:0) - (cb?1:0); // las que ya tienen historial primero (repasos pendientes), nuevas al final
+  });
+  const session = due.slice(0, 30);
+  hideLoading();
+
+  if (session.length === 0){
+    alert('¡No tienes tarjetas pendientes de ' + LANGUAGES[lang].label + ' por ahora! Vuelve más tarde.');
+    return;
+  }
+  srsSession = { lang, queue: session, idx: 0, revealed: false };
+  renderSrsCard();
+  showScreen('srs', '📇 Repaso · ' + LANGUAGES[lang].label);
+}
+
+async function renderSrsCard(){
+  const el = document.getElementById('srsContent');
+  if (srsSession.idx >= srsSession.queue.length){
+    el.innerHTML = `<div class="empty">🎉 Terminaste esta sesión de repaso.</div>
+      <button class="btn" style="width:100%" onclick="showScreen('home','Mis libros')">Volver a Libros</button>`;
+    return;
+  }
+  const word = srsSession.queue[srsSession.idx];
+  const lang = srsSession.lang;
+  srsSession.revealed = false;
+
+  el.innerHTML = `
+    <div class="srs-progress">Tarjeta ${srsSession.idx + 1} de ${srsSession.queue.length}</div>
+    <div class="srs-card">
+      <div class="srs-word">${escapeHtml(word)}</div>
+      <div id="srsAnswerArea"></div>
+    </div>
+    <button class="srs-show" id="srsShowBtn">👁 Mostrar respuesta</button>
+    <div class="srs-rate-row" id="srsRateRow" style="display:none;margin-top:10px;">
+      <button class="srs-again" data-r="0">Otra vez</button>
+      <button class="srs-hard" data-r="1">Difícil</button>
+      <button class="srs-good" data-r="2">Bien</button>
+      <button class="srs-easy" data-r="3">Fácil</button>
+    </div>`;
+
+  speak(word, lang, 0.85);
+
+  document.getElementById('srsShowBtn').addEventListener('click', async ()=>{
+    srsSession.revealed = true;
+    document.getElementById('srsShowBtn').style.display = 'none';
+    document.getElementById('srsRateRow').style.display = 'flex';
+    const answerArea = document.getElementById('srsAnswerArea');
+    answerArea.innerHTML = '<div class="srs-answer">Traduciendo…</div>';
+    const t = await fetchTranslationRaw(word, lang);
+    answerArea.innerHTML = `<div class="srs-answer">➜ ${t ? escapeHtml(t) : 'sin traducción disponible'}</div>`;
+  });
+
+  document.getElementById('srsRateRow').querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const rating = parseInt(btn.dataset.r, 10);
+      const key = lang + ':' + word;
+      const card = srsCards[key] || { interval:0, ease:2.5, due:Date.now(), reps:0 };
+      srsSchedule(card, rating);
+      srsCards[key] = card;
+      saveSrs();
+      srsSession.idx++;
+      renderSrsCard();
+    });
+  });
+}
+
+/* ===================== Verbos conjugados ===================== */
+const TENSE_LABELS = { presente:'Presente', pasado:'Pasado', futuro:'Futuro' };
+const verbDataCache = {};
+async function loadVerbData(lang){
+  if (verbDataCache[lang]) return verbDataCache[lang];
+  const data = await fetch(`data/verbs-${lang}.json`).then(r=>r.json());
+  verbDataCache[lang] = data;
+  return data;
+}
+
+document.getElementById('openVerbsBtn').addEventListener('click', async ()=>{
+  const lang = vocabLangSelect.value;
+  showLoading('Cargando verbos…');
+  const data = await loadVerbData(lang);
+  hideLoading();
+  renderVerbList(lang, data);
+  showScreen('verbs', '📖 Verbos · ' + LANGUAGES[lang].label);
+});
+
+function renderVerbList(lang, data){
+  const el = document.getElementById('verbsContent');
+  const infinitives = Object.keys(data.verbs).sort();
+  el.innerHTML = infinitives.map(inf=>`<div class="verb-item" data-inf="${escapeHtml(inf)}">${escapeHtml(inf)}</div>`).join('');
+  el.querySelectorAll('.verb-item').forEach(item=>{
+    item.addEventListener('click', ()=> renderVerbDetail(lang, data, item.dataset.inf));
+  });
+}
+
+function renderVerbDetail(lang, data, inf){
+  const el = document.getElementById('verbsContent');
+  const persons = data.persons;
+  const conj = data.verbs[inf];
+  const tenseBlocks = Object.keys(TENSE_LABELS).map(tense=>{
+    const forms = conj[tense];
+    const rows = persons.map((p,i)=> `<tr>
+        <td class="pcell">${escapeHtml(p)}</td>
+        <td>${escapeHtml(forms[i])} <button data-say="${escapeHtml(forms[i])}">🔊</button></td>
+      </tr>`).join('');
+    return `<div class="biglabel" style="margin-top:16px;">${TENSE_LABELS[tense]}</div>
+      <table class="conj-table"><tbody>${rows}</tbody></table>`;
+  }).join('');
+
+  el.innerHTML = `
+    <a class="back-link" id="verbBackLink">‹ Todos los verbos</a>
+    <div class="srs-word" style="text-align:left;">${escapeHtml(inf)} <button data-say="${escapeHtml(inf)}" style="background:none;border:none;color:var(--accent);font-size:18px;">🔊</button></div>
+    ${tenseBlocks}`;
+  document.getElementById('verbBackLink').addEventListener('click', ()=> renderVerbList(lang, data));
+  el.querySelectorAll('button[data-say]').forEach(btn=>{
+    btn.addEventListener('click', ()=> speak(btn.dataset.say, lang, 0.8));
+  });
+}
+
+/* ===================== Expresiones comunes ===================== */
+const exprDataCache = {};
+async function loadExprData(lang){
+  if (exprDataCache[lang]) return exprDataCache[lang];
+  const data = await fetch(`data/expr-${lang}.json`).then(r=>r.json());
+  exprDataCache[lang] = data;
+  return data;
+}
+
+document.getElementById('openExprBtn').addEventListener('click', async ()=>{
+  const lang = vocabLangSelect.value;
+  showLoading('Cargando expresiones…');
+  const data = await loadExprData(lang);
+  hideLoading();
+  renderExprList(lang, data);
+  showScreen('expr', '💬 Expresiones · ' + LANGUAGES[lang].label);
+});
+
+function renderExprList(lang, data){
+  const el = document.getElementById('exprContent');
+  el.innerHTML = data.map(item=>`
+    <div class="expr-item">
+      <div>
+        <div class="ep">${escapeHtml(item.phrase)}</div>
+        <div class="et">${escapeHtml(item.translation)}</div>
+      </div>
+      <button data-say="${escapeHtml(item.phrase)}">🔊</button>
+    </div>`).join('');
+  el.querySelectorAll('button[data-say]').forEach(btn=>{
+    btn.addEventListener('click', ()=> speak(btn.dataset.say, lang, 0.8));
+  });
+}
+
 /* ===================== Popup de palabra: traducción + pronunciación ===================== */
 const popup = document.getElementById('popup');
 let lastSpokenText = '', lastSpokenLang = 'de';
@@ -695,7 +900,7 @@ let pointerActive = false, pointerTimer = null, pointerIdx = 0, pointerCurrentEl
 let pointerAllUnits = []; // TODAS las palabras del libro (resaltadas o no), en orden, listas para tocar y saltar ahí
 let pointerWrapped = false;
 
-pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = parseFloat(pointerSpeed.value).toFixed(2) + 'x');
+pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = pointerSpeed.value + ' ppm');
 pointerBtn.addEventListener('click', ()=>{
   const willShow = !pointerBar.classList.contains('show');
   pointerBar.classList.toggle('show');
@@ -806,24 +1011,9 @@ function stepPointer(){
   el.scrollIntoView({ block:'center', behavior:'smooth' });
   pointerIdx += 1;
 
-  const rate = parseFloat(pointerSpeed.value) || 0.85;
-  const utter = speak(el.textContent, currentBookLang, rate);
-
-  // Avanzamos cuando la voz TERMINA de pronunciar la palabra (no con un cronómetro fijo,
-  // que era lo que cortaba el audio a la mitad). Si el navegador no avisa (a veces pasa
-  // en Safari), un límite de seguridad evita que el puntero se quede trabado.
-  let advanced = false;
-  const advanceOnce = ()=>{
-    if (advanced) return;
-    advanced = true;
-    clearTimeout(pointerTimer);
-    if (pointerActive) stepPointer();
-  };
-  if (utter){
-    utter.onend = advanceOnce;
-    utter.onerror = advanceOnce;
-  }
-  pointerTimer = setTimeout(advanceOnce, 3500);
+  const ppm = parseInt(pointerSpeed.value, 10) || 220;
+  const msPerWord = 60000 / ppm;
+  pointerTimer = setTimeout(stepPointer, msPerWord);
 }
 function pausePointer(){
   pointerActive = false;
