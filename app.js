@@ -224,14 +224,12 @@ function segmentCJKRun(run, dict){
   return tokens;
 }
 
-// Nota: usamos data-w (clave normalizada) únicamente; el texto a mostrar/pronunciar
-// se toma de textContent del span para no duplicar el texto dos veces en el HTML guardado.
-function wordHtml(word, key, langCode, sessionCounts){
-  const priorCount = wordCounts[langCode + ':' + key] || 0;
-  const cls = levelClass(priorCount);
+// Nota: el color (naranja/amarillo/crema) NO se guarda en el HTML del libro — se calcula
+// cada vez que lo abres, según cuántas veces HAS TOCADO esa palabra (ver applyHighlighting()).
+// Así, si tocas una palabra, su color se actualiza al instante en todo el libro.
+function wordHtml(word, key, sessionCounts){
   sessionCounts[key] = (sessionCounts[key] || 0) + 1;
-  if (cls) return `<span class="w-de ${cls}" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
-  return escapeHtml(word);
+  return `<span class="w-de" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
 }
 
 function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, script){
@@ -243,7 +241,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, scr
       if (m.index > lastIndex) html += escapeHtml(sentence.slice(lastIndex, m.index));
       const tokens = segmentCJKRun(m[0], dict);
       tokens.forEach(tok=>{
-        if (dict.set.has(tok)) html += wordHtml(tok, tok, langCode, sessionCounts);
+        if (dict.set.has(tok)) html += wordHtml(tok, tok, sessionCounts);
         else html += escapeHtml(tok);
       });
       lastIndex = m.index + m[0].length;
@@ -261,7 +259,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, esWords, langCode, scr
     if (start > lastIndex) html += escapeHtml(sentence.slice(lastIndex, start));
     const key = normalize(word);
     if (key.length >= 2 && !esWords.has(key) && dict.set.has(key)){
-      html += wordHtml(word, key, langCode, sessionCounts);
+      html += wordHtml(word, key, sessionCounts);
     } else {
       html += escapeHtml(word);
     }
@@ -301,12 +299,8 @@ async function importEpub(file){
 
     const sessionCounts = {};
     const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, dict, esWords, langCode, script));
-
-    for (const [w, c] of Object.entries(sessionCounts)){
-      const key = langCode + ':' + w;
-      wordCounts[key] = (wordCounts[key] || 0) + c;
-    }
-    saveCounts();
+    // Ya NO sumamos estas ocurrencias al progreso automáticamente: el conteo (y el color)
+    // solo sube cuando TÚ tocas la palabra mientras lees (ver el listener de clic más abajo).
 
     const id = 'b_' + Date.now();
     showLoading('Guardando el libro…');
@@ -380,6 +374,18 @@ function renderBookList(){
 }
 
 let currentBookId = null, currentBookLang = 'de';
+
+// Recorre las palabras del libro abierto y les pone el color según cuántas veces
+// las has TOCADO hasta ahora (no según cuántas veces aparecen en el texto).
+function applyHighlighting(){
+  readerEl.querySelectorAll('.w-de').forEach(span=>{
+    const key = span.dataset.w;
+    const count = wordCounts[currentBookLang + ':' + key] || 0;
+    const cls = levelClass(count);
+    span.className = 'w-de' + (cls ? ' ' + cls : '');
+  });
+}
+
 async function openReader(id){
   const meta = booksMeta[id];
   if (!meta){ alert('No se encontró ese libro.'); return; }
@@ -392,6 +398,7 @@ async function openReader(id){
   currentBookLang = meta.lang || 'de';
   readerEl.innerHTML = chunks.join('<hr style="border:none;border-top:1px solid var(--border);margin:2em 0;">');
   readerEl.setAttribute('dir', (LANGUAGES[currentBookLang]||{}).rtl ? 'rtl' : 'ltr');
+  applyHighlighting();
   showScreen('reader', meta.title);
   requestAnimationFrame(()=>{ screens.reader.scrollTop = meta.scrollPos || 0; });
 }
@@ -465,7 +472,7 @@ function renderReview(){
       return `<div class="review-item" data-lang="${lang}" data-word="${escapeHtml(w)}">
         <div>
           <div class="rw">${escapeHtml(w)}</div>
-          <div class="rmeta">${langLabel} · vista ${c} veces · <span class="rtrans">toca 🔊 para traducir</span></div>
+          <div class="rmeta">${langLabel} · consultada ${c} veces · <span class="rtrans">toca 🔊 para traducir</span></div>
         </div>
         <button class="rspeak" style="background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 14px;">🔊</button>
       </div>`;
@@ -494,9 +501,15 @@ readerEl.addEventListener('click', (e)=>{
   const key = span.dataset.w;
   const display = span.textContent;
 
+  // Tocar la palabra = "no la reconocí, la consulté". Esto es lo único que suma al progreso.
+  const langKey = currentBookLang + ':' + key;
+  wordCounts[langKey] = (wordCounts[langKey] || 0) + 1;
+  saveCounts();
+  applyHighlighting(); // el color de TODAS las apariciones de esta palabra se actualiza al instante
+
+  const c = wordCounts[langKey];
   document.getElementById('popWord').textContent = display;
-  const c = wordCounts[currentBookLang + ':' + key] || 0;
-  document.getElementById('popCount').textContent = `Vista ${c} ${c===1?'vez':'veces'} en total`;
+  document.getElementById('popCount').textContent = `Consultada ${c} ${c===1?'vez':'veces'} en total`;
   document.getElementById('popTranslation').textContent = 'Traduciendo…';
   popup.classList.add('show');
   speak(display, currentBookLang, 0.85);

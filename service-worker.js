@@ -1,4 +1,4 @@
-const CACHE = 'lector-de-v4';
+const CACHE = 'lector-de-v5';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
   './data/es-words.json',
