@@ -157,13 +157,26 @@ async function loadTargetDict(langCode){
 }
 
 function normalize(word){ return word.toLowerCase().replace(/[’'‘]/g,"'"); }
-function levelFor(count){
-  if (count >= 13) return -1;
-  if (count >= 7) return 3;
-  if (count >= 2) return 2;
-  return 1;
+
+// Palabras "comunes" (azul) necesitan 20 toques para dejar de resaltarse.
+// Palabras normales siguen la escala naranja(0-1)/amarillo(2-6)/crema(7-12)/sin color(13+).
+function levelClassFor(count, isCommon){
+  if (isCommon) return count >= 20 ? null : 'lvl-blue';
+  if (count >= 13) return null;
+  if (count >= 7) return 'lvl-3';
+  if (count >= 2) return 'lvl-2';
+  return 'lvl-1';
 }
-function levelClass(count){ const lvl = levelFor(count); return lvl === -1 ? null : ('lvl-' + lvl); }
+
+// Para saber si una palabra es "común" fuera del libro (en Progreso/Practicar) necesitamos
+// su diccionario cargado; se carga bajo demanda y se cachea en dictCache.
+function isCommonWord(lang, word){
+  const d = dictCache[lang];
+  return !!(d && d.commonSet && d.commonSet.has(word));
+}
+async function ensureDictsFor(langs){
+  await Promise.all(Array.from(langs).map(l => LANGUAGES[l] ? loadTargetDict(l).catch(()=>null) : null));
+}
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ===================== Parseo del EPUB ===================== */
@@ -225,15 +238,15 @@ function segmentCJKRun(run, dict){
   return tokens;
 }
 
-// Nota: el color (naranja/amarillo/crema) NO se guarda en el HTML del libro — se calcula
-// cada vez que lo abres, según cuántas veces HAS TOCADO esa palabra (ver applyHighlighting()).
-// Así, si tocas una palabra, su color se actualiza al instante en todo el libro.
-function wordHtml(word, key, sessionCounts){
+// Nota: el color NO se guarda fijo en el HTML — se recalcula cada vez que abres el libro,
+// según cuántas veces HAS TOCADO esa palabra (ver applyHighlighting()). La marca "w-common"
+// sí se guarda al importar, porque no cambia (depende del idioma, no de tu progreso).
+function wordHtml(word, key, sessionCounts, isCommon){
   sessionCounts[key] = (sessionCounts[key] || 0) + 1;
-  return `<span class="w-de" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
+  return `<span class="w-de${isCommon ? ' w-common' : ''}" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
 }
 
-function buildSentenceHtml(sentence, sessionCounts, dict, langCode, script){
+function buildSentenceHtml(sentence, sessionCounts, commonHits, dict, langCode, script){
   let html = '';
   if (script === 'cjk'){
     let lastIndex = 0, m;
@@ -242,7 +255,9 @@ function buildSentenceHtml(sentence, sessionCounts, dict, langCode, script){
       if (m.index > lastIndex) html += escapeHtml(sentence.slice(lastIndex, m.index));
       const tokens = segmentCJKRun(m[0], dict);
       tokens.forEach(tok=>{
-        html += dict.commonSet.has(tok) ? escapeHtml(tok) : wordHtml(tok, tok, sessionCounts);
+        const isCommon = dict.commonSet.has(tok);
+        if (isCommon) commonHits.add(tok);
+        html += wordHtml(tok, tok, sessionCounts, isCommon);
       });
       lastIndex = m.index + m[0].length;
     }
@@ -258,8 +273,10 @@ function buildSentenceHtml(sentence, sessionCounts, dict, langCode, script){
     const start = m.index, end = start + word.length;
     if (start > lastIndex) html += escapeHtml(sentence.slice(lastIndex, start));
     const key = normalize(word);
-    if (key.length >= 2 && !dict.commonSet.has(key)){
-      html += wordHtml(word, key, sessionCounts);
+    if (key.length >= 2){
+      const isCommon = dict.commonSet.has(key);
+      if (isCommon) commonHits.add(key);
+      html += wordHtml(word, key, sessionCounts, isCommon);
     } else {
       html += escapeHtml(word);
     }
@@ -269,7 +286,7 @@ function buildSentenceHtml(sentence, sessionCounts, dict, langCode, script){
   return html;
 }
 
-function highlightHtmlChunk(html, sessionCounts, dict, langCode, script){
+function highlightHtmlChunk(html, sessionCounts, commonHits, dict, langCode, script){
   const container = document.createElement('div');
   container.innerHTML = html;
   let blocks = Array.from(container.querySelectorAll(BLOCK_SELECTOR));
@@ -280,7 +297,7 @@ function highlightHtmlChunk(html, sessionCounts, dict, langCode, script){
     if (!text || !text.trim()) return;
     const sentences = splitSentences(text);
     el.innerHTML = sentences.map(s=>{
-      const inner = buildSentenceHtml(s, sessionCounts, dict, langCode, script);
+      const inner = buildSentenceHtml(s, sessionCounts, commonHits, dict, langCode, script);
       return `<span class="sentence">${inner}</span>`;
     }).join('');
   });
@@ -298,14 +315,19 @@ async function importEpub(file){
     showLoading('Detectando palabras en ' + LANGUAGES[langCode].label + '…');
 
     const sessionCounts = {};
-    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, dict, langCode, script));
+    const commonHits = new Set();
+    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, commonHits, dict, langCode, script));
     // Ya NO sumamos estas ocurrencias al progreso automáticamente: el conteo (y el color)
     // solo sube cuando TÚ tocas la palabra mientras lees (ver el listener de clic más abajo).
 
     const id = 'b_' + Date.now();
     showLoading('Guardando el libro…');
     await idbPutContent(id, processedChunks);
-    booksMeta[id] = { title, addedAt: Date.now(), lang: langCode, wordCount: Object.keys(sessionCounts).length, scrollPos: 0, bookmarks: [] };
+    booksMeta[id] = {
+      title, addedAt: Date.now(), lang: langCode, scrollPos: 0, bookmarks: [],
+      uniqueWords: Object.keys(sessionCounts),      // todas las palabras distintas del libro
+      commonWords: Array.from(commonHits)            // cuáles de esas son "comunes" (umbral 20)
+    };
     saveMeta();
 
     renderBookList();
@@ -342,6 +364,22 @@ function showScreen(name, title){
 backBtn.addEventListener('click', ()=> { saveCurrentScroll(); showScreen('home', 'Mis libros'); });
 statsBtn.addEventListener('click', renderStats);
 
+// Calcula, en vivo, cuántas palabras del libro ya "sabes" (según tu progreso actual)
+function bookProgress(meta){
+  const words = meta.uniqueWords || [];
+  const total = words.length;
+  if (!total) return null;
+  const commonSet = new Set(meta.commonWords || []);
+  let known = 0;
+  words.forEach(k=>{
+    const count = wordCounts[meta.lang + ':' + k] || 0;
+    const threshold = commonSet.has(k) ? 20 : 13;
+    if (count >= threshold) known++;
+  });
+  const unknownPct = Math.round(100 * (total - known) / total);
+  return { total, known, unknownPct };
+}
+
 function renderBookList(){
   const list = document.getElementById('bookList');
   const ids = Object.keys(booksMeta).sort((a,b)=> booksMeta[b].addedAt - booksMeta[a].addedAt);
@@ -353,10 +391,12 @@ function renderBookList(){
     const b = booksMeta[id];
     const date = new Date(b.addedAt).toLocaleDateString('es-MX', {day:'numeric', month:'short'});
     const langLabel = (LANGUAGES[b.lang] || {label:'?'}).label;
+    const prog = bookProgress(b);
+    const progText = prog ? ` · ${prog.total} palabras · ${prog.known} conocidas · ${prog.unknownPct}% por aprender` : '';
     return `<div class="booklist-item">
       <div class="open-book" data-id="${id}" style="flex:1;cursor:pointer;">
         <div class="title">${escapeHtml(b.title)}<span class="book-lang-tag">${langLabel}</span></div>
-        <div class="meta">${date} · ${b.wordCount || 0} palabras${b.scrollPos ? ' · en progreso' : ''}</div>
+        <div class="meta">${date}${progText}${b.scrollPos ? ' · en progreso' : ''}</div>
       </div>
       <button class="del-book btn-danger" data-id="${id}" style="background:none;border:none;font-size:18px;padding:6px 10px;">🗑</button>
     </div>`;
@@ -380,9 +420,10 @@ let currentBookId = null, currentBookLang = 'de';
 function applyHighlighting(){
   readerEl.querySelectorAll('.w-de').forEach(span=>{
     const key = span.dataset.w;
+    const isCommon = span.classList.contains('w-common');
     const count = wordCounts[currentBookLang + ':' + key] || 0;
-    const cls = levelClass(count);
-    span.className = 'w-de' + (cls ? ' ' + cls : '');
+    const cls = levelClassFor(count, isCommon);
+    span.className = 'w-de' + (isCommon ? ' w-common' : '') + (cls ? ' ' + cls : '');
   });
 }
 
@@ -418,63 +459,87 @@ function saveCurrentScroll(){
 }
 
 /* ===================== Estadísticas ===================== */
-function renderStats(){
-  const entries = Object.entries(wordCounts).sort((a,b)=> b[1]-a[1]);
-  const el = document.getElementById('stats');
-  const totalNew = entries.filter(([,c])=>c<=1).length;
-  const totalLearning = entries.filter(([,c])=>c>=2&&c<=6).length;
-  const totalReview = entries.filter(([,c])=>c>=7&&c<=12).length;
-  const totalMastered = entries.filter(([,c])=>c>=13).length;
+async function renderStats(){
+  showLoading('Calculando tu progreso…');
+  const langsInUse = new Set(Object.keys(wordCounts).map(k=>k.split(':')[0]));
+  await ensureDictsFor(langsInUse);
 
+  const entries = Object.entries(wordCounts).sort((a,b)=> b[1]-a[1]);
+  let blueProgress=0, blueMastered=0, regNew=0, regLearn=0, regReview=0, regMastered=0;
+  entries.forEach(([k,c])=>{
+    const [lang, w] = k.split(':');
+    if (isCommonWord(lang, w)){
+      if (c >= 20) blueMastered++; else blueProgress++;
+    } else {
+      if (c >= 13) regMastered++;
+      else if (c >= 7) regReview++;
+      else if (c >= 2) regLearn++;
+      else regNew++;
+    }
+  });
+
+  const el = document.getElementById('stats');
   el.innerHTML = `
     <div class="card" style="background:var(--panel);border-radius:14px;padding:16px;margin:16px;">
-      <div class="statrow"><span>🟠 Nuevas / vistas 1 vez</span><b>${totalNew}</b></div>
-      <div class="statrow"><span>🟡 En aprendizaje (2-6)</span><b>${totalLearning}</b></div>
-      <div class="statrow"><span>⬜ Repaso (7-12)</span><b>${totalReview}</b></div>
-      <div class="statrow"><span>✅ Dominadas (13+)</span><b>${totalMastered}</b></div>
+      <div class="statrow"><span>🔵 Comunes en progreso (&lt;20 toques)</span><b>${blueProgress}</b></div>
+      <div class="statrow"><span>✅ Comunes dominadas (20+)</span><b>${blueMastered}</b></div>
+      <div class="statrow"><span>🟠 Nuevas / vistas 1 vez</span><b>${regNew}</b></div>
+      <div class="statrow"><span>🟡 En aprendizaje (2-6)</span><b>${regLearn}</b></div>
+      <div class="statrow"><span>⬜ Repaso (7-12)</span><b>${regReview}</b></div>
+      <div class="statrow"><span>✅ Dominadas (13+)</span><b>${regMastered}</b></div>
     </div>
     <div class="card" style="margin:0 16px 16px;">
-      ${entries.length === 0 ? '<div class="empty">Todavía no has leído palabras en ningún idioma.</div>' :
+      ${entries.length === 0 ? '<div class="empty">Todavía no has tocado palabras en ningún idioma.</div>' :
         entries.map(([k,c])=>{
           const [lang, w] = k.split(':');
           const langLabel = (LANGUAGES[lang]||{label:lang}).label;
-          return `<div class="statrow"><span>${escapeHtml(w)} <span style="color:var(--sub);font-size:11px">(${langLabel})</span></span><span style="color:var(--sub)">${c}×</span></div>`;
+          const common = isCommonWord(lang, w);
+          return `<div class="statrow"><span>${escapeHtml(w)} <span style="color:var(--sub);font-size:11px">(${langLabel}${common?' · común':''})</span></span><span style="color:var(--sub)">${c}×</span></div>`;
         }).join('')}
     </div>
     <div style="margin:0 16px 16px;">
       <button class="btn-secondary btn-danger" id="resetProgressBtn" style="width:100%;">🗑 Reiniciar todo el progreso</button>
     </div>`;
   document.getElementById('resetProgressBtn').addEventListener('click', ()=>{
-    if (confirm('Esto borra el conteo de todas tus palabras vistas (naranja/amarillo/crema) en todos los idiomas. Tus libros no se borran. ¿Continuar?')){
+    if (confirm('Esto borra el conteo de todas tus palabras vistas (naranja/amarillo/crema/azul) en todos los idiomas. Tus libros no se borran. ¿Continuar?')){
       wordCounts = {};
       saveCounts();
       renderStats();
     }
   });
+  hideLoading();
   showScreen('stats', 'Tu progreso');
 }
 
 /* ===================== Modo repaso / practicar ===================== */
 document.getElementById('openReviewBtn').addEventListener('click', renderReview);
-function renderReview(){
+async function renderReview(){
+  showLoading('Cargando…');
   const filterLang = reviewLangFilter.value;
+  const langsInUse = filterLang ? [filterLang] : Array.from(new Set(Object.keys(wordCounts).map(k=>k.split(':')[0])));
+  await ensureDictsFor(langsInUse);
+
   const entries = Object.entries(wordCounts).filter(([k,c])=>{
-    const [lang] = k.split(':');
+    const [lang, w] = k.split(':');
     if (filterLang && lang !== filterLang) return false;
-    return c >= 2 && c <= 12;
+    if (isCommonWord(lang, w)) return c >= 1 && c < 20;   // comunes: en progreso hasta 20
+    return c >= 2 && c <= 12;                              // normales: amarillo/crema
   }).sort((a,b)=> b[1]-a[1]);
+  hideLoading();
 
   const el = document.getElementById('reviewList');
   if (entries.length === 0){
-    el.innerHTML = '<div class="empty">No tienes palabras en amarillo o crema todavía para este filtro. ¡Sigue leyendo!</div>';
+    el.innerHTML = '<div class="empty">No tienes palabras en progreso todavía para este filtro. ¡Sigue leyendo y tocando palabras!</div>';
   } else {
     el.innerHTML = entries.map(([k,c])=>{
       const [lang, w] = k.split(':');
       const langLabel = (LANGUAGES[lang]||{label:lang}).label;
+      const common = isCommonWord(lang, w);
+      const goal = common ? 20 : 13;
       return `<div class="review-item" data-lang="${lang}" data-word="${escapeHtml(w)}">
         <div>
-          <div class="rw">${escapeHtml(w)}</div>
-          <div class="rmeta">${langLabel} · consultada ${c} veces · <span class="rtrans">toca 🔊 para traducir</span></div>
+          <div class="rw">${escapeHtml(w)}${common ? ' <span style="color:var(--accent);font-size:11px">● común</span>' : ''}</div>
+          <div class="rmeta">${langLabel} · consultada ${c} de ${goal} · <span class="rtrans">toca 🔊 para traducir</span></div>
         </div>
         <button class="rspeak" style="background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 14px;">🔊</button>
       </div>`;

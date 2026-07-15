@@ -59,9 +59,10 @@
   #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;}
   #reader p{margin:0 0 1em;}
   .w-de{border-radius:4px;padding:1px 2px;cursor:pointer;}
-  .lvl-0,.lvl-1{background:var(--orange);color:#1c1c1e;}
+  .lvl-1{background:var(--orange);color:#1c1c1e;}
   .lvl-2{background:var(--yellow);color:#1c1c1e;}
   .lvl-3{background:var(--cream);color:#1c1c1e;}
+  .lvl-blue{background:var(--accent);color:#fff;}
   #stats{padding:16px;}
   .statrow{display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border);font-size:15px;}
   #popup{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
@@ -130,12 +131,13 @@
           <input type="file" id="fileInput" accept=".epub,application/epub+zip">
         </div>
         <div class="legend">
+          <span><i class="dot" style="background:var(--accent)"></i>Palabra común (hasta 20 toques)</span>
           <span><i class="dot" style="background:var(--orange)"></i>Nueva (0-1 veces)</span>
           <span><i class="dot" style="background:var(--yellow)"></i>2-6 veces</span>
           <span><i class="dot" style="background:var(--cream)"></i>7-12 veces</span>
-          <span>13+ = ya dominada, sin resaltar</span>
+          <span>13+ (o 20+ si es común) = dominada, sin resaltar</span>
         </div>
-        <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra (porque no la reconociste) — no por el simple hecho de leerla. Se asume que todo el libro está en el idioma elegido, y no se resaltan las ~300 palabras más comunes de ese idioma (asumimos que esas ya las sabes).</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra. Las ~300 palabras más comunes del idioma se marcan en azul y necesitan 20 toques para dejar de resaltarse (en vez de 13).</div>
       </div>
       <div class="card">
         <div class="biglabel">Practicar</div>

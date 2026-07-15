@@ -1,4 +1,4 @@
-const CACHE = 'lector-de-v8';
+const CACHE = 'lector-de-v10';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
   './data/de-words.json', './data/fr-words.json', './data/it-words.json',
