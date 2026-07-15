@@ -22,13 +22,16 @@ const SCRIPT_RANGES = {
 };
 const CJK_RUN_RE = /[\u4E00-\u9FFF\u3040-\u30FF]+/g;
 
-/* ===================== Almacenamiento local ===================== */
+/* ===================== Almacenamiento chico (localStorage) ===================== */
 const DB = {
   get(key, fallback){
     try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
     catch(e){ return fallback; }
   },
-  set(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+  set(key, val){
+    try{ localStorage.setItem(key, JSON.stringify(val)); return true; }
+    catch(e){ console.error('Error guardando', key, e); return false; }
+  }
 };
 
 let wordCounts = DB.get('wordCounts', {});
@@ -44,13 +47,85 @@ let wordCounts = DB.get('wordCounts', {});
   if (changed) DB.set('wordCounts', wordCounts);
 })();
 
-// books: { id: { title, addedAt, lang, htmlChunks:[...], scrollPos, bookmarks:[{id,scrollPos,label,createdAt}] } }
-let books = DB.get('books', {});
+// booksMeta: datos LIVIANOS por libro -> { id: {title, lang, addedAt, wordCount, scrollPos, bookmarks:[]} }
+// El contenido HTML pesado vive en IndexedDB, no aquí.
+let booksMeta = DB.get('booksMeta', {});
 let translationCache = DB.get('translationCache', {});
 
+function saveMeta(){ DB.set('booksMeta', booksMeta); }
 function saveCounts(){ DB.set('wordCounts', wordCounts); }
-function saveBooks(){ DB.set('books', books); }
 function saveTranslations(){ DB.set('translationCache', translationCache); }
+
+/* ===================== Almacenamiento grande (IndexedDB) para el contenido de los libros ===================== */
+const IDB_NAME = 'lector-idiomas-content';
+const IDB_STORE = 'chunks';
+let _idbPromise = null;
+function openContentDB(){
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve, reject)=>{
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE, { keyPath:'id' }); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+  return _idbPromise;
+}
+async function idbPutContent(id, htmlChunks){
+  const db = await openContentDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ id, htmlChunks });
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+async function idbGetContent(id){
+  const db = await openContentDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(id);
+    req.onsuccess = ()=> resolve(req.result ? req.result.htmlChunks : null);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbDeleteContent(id){
+  const db = await openContentDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(id);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+async function idbGetAllContent(){
+  const db = await openContentDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = ()=> resolve(req.result || []);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+
+// Migración: versiones viejas de la app guardaban TODO (incluido el contenido pesado) en localStorage bajo 'books'.
+// Eso llenaba la cuota rápido. Migramos lo liviano a booksMeta y lo pesado a IndexedDB, y liberamos el espacio viejo.
+async function migrateLegacyBooks(){
+  const legacy = DB.get('books', null);
+  if (!legacy) return;
+  for (const [id, b] of Object.entries(legacy)){
+    try{
+      if (!booksMeta[id]){
+        booksMeta[id] = {
+          title: b.title || 'Libro sin título', lang: b.lang || 'de', addedAt: b.addedAt || Date.now(),
+          wordCount: b.wordCount || 0, scrollPos: b.scrollPos || 0, bookmarks: b.bookmarks || []
+        };
+      }
+      if (b.htmlChunks && b.htmlChunks.length) await idbPutContent(id, b.htmlChunks);
+    } catch(e){ console.warn('No se pudo migrar el libro', id, e); }
+  }
+  saveMeta();
+  localStorage.removeItem('books');
+}
 
 /* ===================== Selector de idioma (importar + practicar) ===================== */
 const langSelect = document.getElementById('langSelect');
@@ -81,7 +156,6 @@ async function loadTargetDict(langCode){
 }
 
 function normalize(word){ return word.toLowerCase().replace(/[’'‘]/g,"'"); }
-
 function levelFor(count){
   if (count >= 13) return -1;
   if (count >= 7) return 3;
@@ -133,7 +207,7 @@ function splitSentences(text){
   return parts && parts.length ? parts : [text];
 }
 
-// Segmentación por "maximum matching hacia adelante" para chino/japonés (sin espacios)
+// Segmentación por "maximum matching hacia adelante" para chino/japonés (sin espacios entre palabras)
 function segmentCJKRun(run, dict){
   const tokens = [];
   let i = 0;
@@ -143,18 +217,20 @@ function segmentCJKRun(run, dict){
     for (let len = maxTry; len >= 1; len--){
       if (dict.set.has(run.substr(i, len))){ matchedLen = len; break; }
     }
-    if (matchedLen === 0) matchedLen = 1; // carácter suelto, no reconocido
+    if (matchedLen === 0) matchedLen = 1;
     tokens.push(run.substr(i, matchedLen));
     i += matchedLen;
   }
   return tokens;
 }
 
+// Nota: usamos data-w (clave normalizada) únicamente; el texto a mostrar/pronunciar
+// se toma de textContent del span para no duplicar el texto dos veces en el HTML guardado.
 function wordHtml(word, key, langCode, sessionCounts){
   const priorCount = wordCounts[langCode + ':' + key] || 0;
   const cls = levelClass(priorCount);
   sessionCounts[key] = (sessionCounts[key] || 0) + 1;
-  if (cls) return `<span class="w-de ${cls}" data-word="${escapeHtml(key)}" data-display="${escapeHtml(word)}">${escapeHtml(word)}</span>`;
+  if (cls) return `<span class="w-de ${cls}" data-w="${escapeHtml(key)}">${escapeHtml(word)}</span>`;
   return escapeHtml(word);
 }
 
@@ -233,9 +309,10 @@ async function importEpub(file){
     saveCounts();
 
     const id = 'b_' + Date.now();
-    books[id] = { title, addedAt: Date.now(), lang: langCode, htmlChunks: processedChunks,
-      wordCount: Object.keys(sessionCounts).length, scrollPos: 0, bookmarks: [] };
-    saveBooks();
+    showLoading('Guardando el libro…');
+    await idbPutContent(id, processedChunks);
+    booksMeta[id] = { title, addedAt: Date.now(), lang: langCode, wordCount: Object.keys(sessionCounts).length, scrollPos: 0, bookmarks: [] };
+    saveMeta();
 
     renderBookList();
     hideLoading();
@@ -273,16 +350,15 @@ statsBtn.addEventListener('click', renderStats);
 
 function renderBookList(){
   const list = document.getElementById('bookList');
-  const ids = Object.keys(books).sort((a,b)=> books[b].addedAt - books[a].addedAt);
+  const ids = Object.keys(booksMeta).sort((a,b)=> booksMeta[b].addedAt - booksMeta[a].addedAt);
   if (ids.length === 0){
     list.innerHTML = '<div class="empty">Aún no has agregado ningún libro.</div>';
     return;
   }
   list.innerHTML = ids.map(id=>{
-    const b = books[id];
+    const b = booksMeta[id];
     const date = new Date(b.addedAt).toLocaleDateString('es-MX', {day:'numeric', month:'short'});
     const langLabel = (LANGUAGES[b.lang] || {label:'?'}).label;
-    const pct = b.htmlChunks && b.htmlChunks.length ? '' : '';
     return `<div class="booklist-item">
       <div class="open-book" data-id="${id}" style="flex:1;cursor:pointer;">
         <div class="title">${escapeHtml(b.title)}<span class="book-lang-tag">${langLabel}</span></div>
@@ -292,25 +368,32 @@ function renderBookList(){
     </div>`;
   }).join('');
   list.querySelectorAll('.open-book').forEach(el=> el.addEventListener('click', ()=> openReader(el.dataset.id)));
-  list.querySelectorAll('.del-book').forEach(el=> el.addEventListener('click', (e)=>{
+  list.querySelectorAll('.del-book').forEach(el=> el.addEventListener('click', async (e)=>{
     e.stopPropagation();
     if (confirm('¿Eliminar este libro de tu biblioteca? (tu progreso de palabras NO se pierde)')){
-      delete books[el.dataset.id];
-      saveBooks();
+      delete booksMeta[el.dataset.id];
+      saveMeta();
+      await idbDeleteContent(el.dataset.id);
       renderBookList();
     }
   }));
 }
 
 let currentBookId = null, currentBookLang = 'de';
-function openReader(id){
-  const b = books[id];
+async function openReader(id){
+  const meta = booksMeta[id];
+  if (!meta){ alert('No se encontró ese libro.'); return; }
+  showLoading('Abriendo libro…');
+  const chunks = await idbGetContent(id);
+  hideLoading();
+  if (!chunks){ alert('El contenido de este libro no se encontró (puede haberse perdido en una versión anterior). Intenta volver a importarlo.'); return; }
+
   currentBookId = id;
-  currentBookLang = b.lang || 'de';
-  readerEl.innerHTML = b.htmlChunks.join('<hr style="border:none;border-top:1px solid var(--border);margin:2em 0;">');
-  readerEl.setAttribute('dir', LANGUAGES[currentBookLang].rtl ? 'rtl' : 'ltr');
-  showScreen('reader', b.title);
-  requestAnimationFrame(()=>{ screens.reader.scrollTop = b.scrollPos || 0; });
+  currentBookLang = meta.lang || 'de';
+  readerEl.innerHTML = chunks.join('<hr style="border:none;border-top:1px solid var(--border);margin:2em 0;">');
+  readerEl.setAttribute('dir', (LANGUAGES[currentBookLang]||{}).rtl ? 'rtl' : 'ltr');
+  showScreen('reader', meta.title);
+  requestAnimationFrame(()=>{ screens.reader.scrollTop = meta.scrollPos || 0; });
 }
 
 let scrollSaveTimer = null;
@@ -320,9 +403,9 @@ screens.reader.addEventListener('scroll', ()=>{
   scrollSaveTimer = setTimeout(saveCurrentScroll, 400);
 });
 function saveCurrentScroll(){
-  if (!currentBookId || !books[currentBookId]) return;
-  books[currentBookId].scrollPos = screens.reader.scrollTop;
-  saveBooks();
+  if (!currentBookId || !booksMeta[currentBookId]) return;
+  booksMeta[currentBookId].scrollPos = screens.reader.scrollTop;
+  saveMeta();
 }
 
 /* ===================== Estadísticas ===================== */
@@ -369,7 +452,7 @@ function renderReview(){
   const entries = Object.entries(wordCounts).filter(([k,c])=>{
     const [lang] = k.split(':');
     if (filterLang && lang !== filterLang) return false;
-    return c >= 2 && c <= 12; // amarillo + crema: en aprendizaje / repaso
+    return c >= 2 && c <= 12;
   }).sort((a,b)=> b[1]-a[1]);
 
   const el = document.getElementById('reviewList');
@@ -408,18 +491,18 @@ let lastSpokenText = '', lastSpokenLang = 'de';
 readerEl.addEventListener('click', (e)=>{
   const span = e.target.closest('.w-de');
   if (!span) return;
-  const word = span.dataset.word;
-  const display = span.dataset.display;
+  const key = span.dataset.w;
+  const display = span.textContent;
 
   document.getElementById('popWord').textContent = display;
-  const c = wordCounts[currentBookLang + ':' + word] || 0;
+  const c = wordCounts[currentBookLang + ':' + key] || 0;
   document.getElementById('popCount').textContent = `Vista ${c} ${c===1?'vez':'veces'} en total`;
   document.getElementById('popTranslation').textContent = 'Traduciendo…';
   popup.classList.add('show');
   speak(display, currentBookLang, 0.85);
   lastSpokenText = display; lastSpokenLang = currentBookLang;
 
-  fetchTranslationRaw(word, currentBookLang).then(t=>{
+  fetchTranslationRaw(key, currentBookLang).then(t=>{
     if (document.getElementById('popWord').textContent === display){
       document.getElementById('popTranslation').textContent = t ? ('➜ ' + t) : 'Sin traducción disponible';
     }
@@ -482,10 +565,10 @@ if ('speechSynthesis' in window){ window.speechSynthesis.onvoiceschanged = ()=>{
 const bookmarksPanel = document.getElementById('bookmarksPanel');
 document.getElementById('bookmarkBtn').addEventListener('click', ()=>{
   if (!currentBookId) return;
-  const b = books[currentBookId];
+  const b = booksMeta[currentBookId];
   b.bookmarks = b.bookmarks || [];
   b.bookmarks.push({ id: 'm_'+Date.now(), scrollPos: screens.reader.scrollTop, createdAt: Date.now() });
-  saveBooks();
+  saveMeta();
   const btn = document.getElementById('bookmarkBtn');
   const original = btn.textContent;
   btn.textContent = '✅ Marcado';
@@ -498,7 +581,7 @@ document.getElementById('showBookmarksBtn').addEventListener('click', ()=>{
 document.getElementById('bookmarksClose').addEventListener('click', ()=> bookmarksPanel.classList.remove('show'));
 
 function renderBookmarksList(){
-  const b = books[currentBookId];
+  const b = booksMeta[currentBookId];
   const list = document.getElementById('bookmarksList');
   const marks = (b && b.bookmarks) || [];
   if (marks.length === 0){
@@ -518,7 +601,7 @@ function renderBookmarksList(){
   }));
   list.querySelectorAll('.del-mark').forEach(el=> el.addEventListener('click', ()=>{
     b.bookmarks = b.bookmarks.filter(m=>m.id !== el.dataset.id);
-    saveBooks();
+    saveMeta();
     renderBookmarksList();
   }));
 }
@@ -531,10 +614,7 @@ const pointerSpeedLabel = document.getElementById('pointerSpeedLabel');
 let pointerActive = false, pointerTimer = null, pointerWords = [], pointerIdx = 0, pointerCurrentEl = null;
 
 pointerSpeed.addEventListener('input', ()=> pointerSpeedLabel.textContent = pointerSpeed.value + ' ppm');
-
-pointerBtn.addEventListener('click', ()=>{
-  pointerBar.classList.toggle('show');
-});
+pointerBtn.addEventListener('click', ()=> pointerBar.classList.toggle('show'));
 document.getElementById('pointerStop').addEventListener('click', stopPointer);
 document.getElementById('pointerPlayPause').addEventListener('click', ()=>{
   if (pointerActive) pausePointer();
@@ -542,7 +622,6 @@ document.getElementById('pointerPlayPause').addEventListener('click', ()=>{
 });
 
 function startPointerFromView(){
-  // recolectar los nodos de texto/spans visibles a partir de la parte superior visible
   const readerRect = screens.reader.getBoundingClientRect();
   const allSentences = Array.from(readerEl.querySelectorAll('.sentence'));
   const visible = allSentences.filter(s=>{
@@ -551,20 +630,6 @@ function startPointerFromView(){
   });
   const startFrom = visible.length ? visible : allSentences;
 
-  // construir lista plana de "palabras" a resaltar (nodos de texto y spans) preservando orden
-  pointerWords = [];
-  startFrom.forEach(sentEl=>{
-    Array.from(sentEl.childNodes).forEach(node=>{
-      if (node.nodeType === 3 && node.textContent.trim()){
-        node.textContent.split(/(\s+)/).filter(t=>t.trim()).forEach(()=>{});
-        pointerWords.push({ type:'text', el: sentEl, text: node.textContent });
-      } else if (node.nodeType === 1){
-        pointerWords.push({ type:'el', el: node });
-      }
-    });
-  });
-  // Nos quedamos solo con los elementos <span> (resaltados o no) para simplificar el resaltado visual;
-  // usamos únicamente los <span class="w-de"> como "anclas" de avance, moviendo el indicador palabra por palabra.
   pointerWords = [];
   startFrom.forEach(sentEl=> pointerWords.push(...Array.from(sentEl.querySelectorAll('.w-de'))));
   if (pointerWords.length === 0){
@@ -585,14 +650,13 @@ function stepPointer(){
   el.classList.add('pointer-current');
   pointerCurrentEl = el;
   el.scrollIntoView({ block:'center', behavior:'smooth' });
-  speak(el.dataset.display, currentBookLang, 0.85);
+  speak(el.textContent, currentBookLang, 0.85);
 
-  const ppm = parseInt(pointerSpeed.value, 10) || 110; // palabras por minuto
+  const ppm = parseInt(pointerSpeed.value, 10) || 110;
   const msPerWord = 60000 / ppm;
   pointerIdx += 1;
   pointerTimer = setTimeout(stepPointer, msPerWord);
 }
-
 function pausePointer(){
   pointerActive = false;
   clearTimeout(pointerTimer);
@@ -609,8 +673,12 @@ function stopPointer(){
 }
 
 /* ===================== Exportar / importar respaldo completo ===================== */
-document.getElementById('exportBtn').addEventListener('click', ()=>{
-  const payload = { version:1, exportedAt: Date.now(), wordCounts, books, translationCache };
+document.getElementById('exportBtn').addEventListener('click', async ()=>{
+  showLoading('Preparando respaldo…');
+  const allContent = await idbGetAllContent(); // [{id, htmlChunks}, ...]
+  const bookContents = {};
+  allContent.forEach(rec=> bookContents[rec.id] = rec.htmlChunks);
+  const payload = { version:2, exportedAt: Date.now(), wordCounts, booksMeta, translationCache, bookContents };
   const blob = new Blob([JSON.stringify(payload)], { type:'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -620,24 +688,33 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  hideLoading();
 });
 
 document.getElementById('importInput').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = ()=>{
+  reader.onload = async ()=>{
     try{
       const data = JSON.parse(reader.result);
       if (!confirm('Esto reemplaza tu progreso, libros y traducciones actuales por los del archivo. ¿Continuar?')) return;
+      showLoading('Restaurando respaldo…');
       wordCounts = data.wordCounts || {};
-      books = data.books || {};
+      booksMeta = data.booksMeta || {};
       translationCache = data.translationCache || {};
-      saveCounts(); saveBooks(); saveTranslations();
+      saveCounts(); saveMeta(); saveTranslations();
+      const bookContents = data.bookContents || {};
+      for (const [id, chunks] of Object.entries(bookContents)){
+        await idbPutContent(id, chunks);
+      }
+      hideLoading();
       renderBookList();
       alert('Respaldo importado correctamente.');
     } catch(err){
+      hideLoading();
       alert('No se pudo leer el archivo de respaldo.');
+      console.error(err);
     }
   };
   reader.readAsText(file);
@@ -665,7 +742,10 @@ function showLoading(text){ document.getElementById('loadingText').textContent =
 function hideLoading(){ loadingEl.classList.remove('show'); }
 
 /* ===================== Inicio ===================== */
-renderBookList();
+(async function init(){
+  try{ await migrateLegacyBooks(); } catch(e){ console.warn('Migración omitida:', e); }
+  renderBookList();
+})();
 
 if ('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
