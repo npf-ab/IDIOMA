@@ -51,6 +51,21 @@ let wordCounts = DB.get('wordCounts', {});
 // El contenido HTML pesado vive en IndexedDB, no aquí.
 let booksMeta = DB.get('booksMeta', {});
 let translationCache = DB.get('translationCache', {});
+let favorites = DB.get('favorites', {});     // { "lang:word": true }
+let wordNotes = DB.get('wordNotes', {});     // { "lang:word": "texto de la nota" }
+
+function isFavorite(lang, word){ return !!favorites[lang + ':' + word]; }
+function toggleFavorite(lang, word){
+  const k = lang + ':' + word;
+  if (favorites[k]) delete favorites[k]; else favorites[k] = true;
+  DB.set('favorites', favorites);
+}
+function getNote(lang, word){ return wordNotes[lang + ':' + word] || ''; }
+function setNote(lang, word, text){
+  const k = lang + ':' + word;
+  if (text && text.trim()) wordNotes[k] = text.trim(); else delete wordNotes[k];
+  DB.set('wordNotes', wordNotes);
+}
 
 function saveMeta(){ DB.set('booksMeta', booksMeta); }
 function saveCounts(){ DB.set('wordCounts', wordCounts); }
@@ -138,10 +153,12 @@ const reviewLangFilter = document.getElementById('reviewLangFilter');
 reviewLangFilter.innerHTML = `<option value="">Todos los idiomas</option>` +
   Object.entries(LANGUAGES).map(([code,l])=>`<option value="${code}">${l.label}</option>`).join('');
 
+// El repaso tipo Anki solo existe para los idiomas donde tenemos tu diccionario propio
+// (o, en su defecto, mientras tanto cae en la lista de frecuencia como respaldo).
+const SRS_LANGS = ['de','fr','it','pt','zh','ja'];
 const srsLangSelect = document.getElementById('srsLangSelect');
-srsLangSelect.innerHTML = Object.entries(LANGUAGES).map(([code,l])=>
-  `<option value="${code}">${l.label}</option>`).join('');
-srsLangSelect.value = langSelect.value;
+srsLangSelect.innerHTML = SRS_LANGS.map(code=>`<option value="${code}">${LANGUAGES[code].label}</option>`).join('');
+srsLangSelect.value = SRS_LANGS.includes(langSelect.value) ? langSelect.value : 'de';
 
 // Verbos y expresiones solo existen para estos 5 idiomas (los de mayor confianza)
 const VOCAB_LANGS = ['de','fr','it','pt','nl'];
@@ -476,45 +493,61 @@ function saveCurrentScroll(){
 /* ===================== Estadísticas ===================== */
 async function renderStats(){
   showLoading('Calculando tu progreso…');
-  const langsInUse = new Set(Object.keys(wordCounts).map(k=>k.split(':')[0]));
+  const langsInUse = Array.from(new Set(Object.keys(wordCounts).map(k=>k.split(':')[0]))).sort();
   await ensureDictsFor(langsInUse);
 
-  const entries = Object.entries(wordCounts).sort((a,b)=> b[1]-a[1]);
-  let blueProgress=0, blueMastered=0, regNew=0, regLearn=0, regReview=0, regMastered=0;
-  entries.forEach(([k,c])=>{
+  // Agrupar por idioma en vez de mezclarlo todo
+  const byLang = {};
+  langsInUse.forEach(l=> byLang[l] = { entries: [], blueProgress:0, blueMastered:0, regNew:0, regLearn:0, regReview:0, regMastered:0 });
+  Object.entries(wordCounts).forEach(([k,c])=>{
     const [lang, w] = k.split(':');
+    if (!byLang[lang]) return;
+    byLang[lang].entries.push([w,c]);
     if (isCommonWord(lang, w)){
-      if (c >= 20) blueMastered++; else blueProgress++;
+      if (c >= 20) byLang[lang].blueMastered++; else byLang[lang].blueProgress++;
     } else {
-      if (c >= 13) regMastered++;
-      else if (c >= 7) regReview++;
-      else if (c >= 2) regLearn++;
-      else regNew++;
+      if (c >= 13) byLang[lang].regMastered++;
+      else if (c >= 7) byLang[lang].regReview++;
+      else if (c >= 2) byLang[lang].regLearn++;
+      else byLang[lang].regNew++;
     }
   });
 
   const el = document.getElementById('stats');
-  el.innerHTML = `
-    <div class="card" style="background:var(--panel);border-radius:14px;padding:16px;margin:16px;">
-      <div class="statrow"><span>🔵 Comunes en progreso (&lt;20 toques)</span><b>${blueProgress}</b></div>
-      <div class="statrow"><span>✅ Comunes dominadas (20+)</span><b>${blueMastered}</b></div>
-      <div class="statrow"><span>🟠 Nuevas / vistas 1 vez</span><b>${regNew}</b></div>
-      <div class="statrow"><span>🟡 En aprendizaje (2-6)</span><b>${regLearn}</b></div>
-      <div class="statrow"><span>⬜ Repaso (7-12)</span><b>${regReview}</b></div>
-      <div class="statrow"><span>✅ Dominadas (13+)</span><b>${regMastered}</b></div>
-    </div>
-    <div class="card" style="margin:0 16px 16px;">
-      ${entries.length === 0 ? '<div class="empty">Todavía no has tocado palabras en ningún idioma.</div>' :
-        entries.map(([k,c])=>{
-          const [lang, w] = k.split(':');
-          const langLabel = (LANGUAGES[lang]||{label:lang}).label;
-          const common = isCommonWord(lang, w);
-          return `<div class="statrow"><span>${escapeHtml(w)} <span style="color:var(--sub);font-size:11px">(${langLabel}${common?' · común':''})</span></span><span style="color:var(--sub)">${c}×</span></div>`;
-        }).join('')}
-    </div>
-    <div style="margin:0 16px 16px;">
+  const resetBtnHtml = `
+    <div style="margin:16px;">
       <button class="btn-secondary btn-danger" id="resetProgressBtn" style="width:100%;">🗑 Reiniciar todo el progreso</button>
     </div>`;
+
+  if (langsInUse.length === 0){
+    el.innerHTML = resetBtnHtml + '<div class="empty">Todavía no has tocado palabras en ningún idioma.</div>';
+  } else {
+    const langBlocks = langsInUse.map(lang=>{
+      const d = byLang[lang];
+      const langLabel = (LANGUAGES[lang]||{label:lang}).label;
+      const sorted = d.entries.sort((a,b)=> b[1]-a[1]);
+      return `
+        <div class="biglabel" style="margin:16px 16px 6px;">${langLabel}</div>
+        <div class="card" style="background:var(--panel);border-radius:14px;padding:16px;margin:0 16px 10px;">
+          <div class="statrow"><span>🔵 Comunes en progreso (&lt;20 toques)</span><b>${d.blueProgress}</b></div>
+          <div class="statrow"><span>✅ Comunes dominadas (20+)</span><b>${d.blueMastered}</b></div>
+          <div class="statrow"><span>🟠 Nuevas / vistas 1 vez</span><b>${d.regNew}</b></div>
+          <div class="statrow"><span>🟡 En aprendizaje (2-6)</span><b>${d.regLearn}</b></div>
+          <div class="statrow"><span>⬜ Repaso (7-12)</span><b>${d.regReview}</b></div>
+          <div class="statrow"><span>✅ Dominadas (13+)</span><b>${d.regMastered}</b></div>
+        </div>
+        <div class="card" style="margin:0 16px 16px;">
+          ${sorted.map(([w,c])=>{
+            const common = isCommonWord(lang, w);
+            const fav = isFavorite(lang, w);
+            const note = getNote(lang, w);
+            return `<div class="statrow"><span>${fav?'⭐ ':''}${escapeHtml(w)}${common?' <span style="color:var(--accent);font-size:11px">· común</span>':''}${note?` <span style="color:var(--sub);font-size:11px">· 📝 ${escapeHtml(note)}</span>`:''}</span><span style="color:var(--sub)">${c}×</span></div>`;
+          }).join('')}
+        </div>`;
+    }).join('');
+    el.innerHTML = resetBtnHtml + langBlocks;
+  }
+
   document.getElementById('resetProgressBtn').addEventListener('click', ()=>{
     if (confirm('Esto borra el conteo de todas tus palabras vistas (naranja/amarillo/crema/azul) en todos los idiomas. Tus libros no se borran. ¿Continuar?')){
       wordCounts = {};
@@ -607,9 +640,9 @@ document.getElementById('openSrsStatsBtn').addEventListener('click', async ()=>{
   const lang = srsLangSelect.value;
   showLoading('Calculando progreso de ' + LANGUAGES[lang].label + '…');
   try{
-    const dict = await loadTargetDict(lang);
+    const deck = await loadSrsDeckWords(lang);
     hideLoading();
-    renderSrsStats(lang, dict);
+    renderSrsStats(lang, deck.words);
   } catch(err){
     hideLoading();
     alert('No se pudo cargar el diccionario de ' + LANGUAGES[lang].label + '.');
@@ -617,8 +650,7 @@ document.getElementById('openSrsStatsBtn').addEventListener('click', async ()=>{
   }
 });
 
-function renderSrsStats(lang, dict){
-  const top3000 = dict.arr.slice(0, 3000);
+function renderSrsStats(lang, top3000){
   const now = Date.now();
   let notStarted=0, learning=0, mature=0, dueNow=0;
   top3000.forEach(w=>{
@@ -641,19 +673,30 @@ function renderSrsStats(lang, dict){
   showScreen('srsStats', '📊 Progreso Anki · ' + LANGUAGES[lang].label);
 }
 
+// Devuelve la lista de palabras del mazo: prioriza TU diccionario (más rico y con traducción
+// confiable); si no existe para ese idioma, cae de vuelta a las 3000 más frecuentes.
+async function loadSrsDeckWords(lang){
+  const gloss = await loadGloss(lang);
+  if (gloss && Object.keys(gloss).length > 0){
+    return { words: Object.keys(gloss), source: 'gloss' };
+  }
+  const dict = await loadTargetDict(lang);
+  return { words: dict.arr.slice(0, 3000), source: 'freq' };
+}
+
 async function startSrsSession(){
   const lang = srsLangSelect.value;
   showLoading('Preparando repaso de ' + LANGUAGES[lang].label + '…');
-  let dict;
+  let deck;
   try{
-    dict = await loadTargetDict(lang);
+    deck = await loadSrsDeckWords(lang);
   } catch(err){
     hideLoading();
-    alert('No se pudo cargar el diccionario de ' + LANGUAGES[lang].label + '. Revisa tu conexión o que el archivo data/' + LANGUAGES[lang].file + ' esté en tu sitio.');
+    alert('No se pudo cargar el diccionario de ' + LANGUAGES[lang].label + '.');
     console.error(err);
     return;
   }
-  const top3000 = dict.arr.slice(0, 3000);
+  const top3000 = deck.words;
 
   const now = Date.now();
   const due = top3000.filter(w=>{
@@ -848,6 +891,11 @@ readerEl.addEventListener('click', (e)=>{
   popup.classList.add('show');
   speak(display, currentBookLang, 0.85);
   lastSpokenText = display; lastSpokenLang = currentBookLang;
+  popup._word = key; popup._lang = currentBookLang;
+
+  const favBtn = document.getElementById('popFav');
+  favBtn.classList.toggle('fav-on', isFavorite(currentBookLang, key));
+  document.getElementById('popNote').value = getNote(currentBookLang, key);
 
   fetchTranslationRaw(key, currentBookLang).then(t=>{
     if (document.getElementById('popWord').textContent === display){
@@ -859,6 +907,19 @@ readerEl.addEventListener('click', (e)=>{
   popup._sentenceText = sentenceEl ? sentenceEl.textContent.trim() : display;
 });
 document.getElementById('popClose').addEventListener('click', ()=> popup.classList.remove('show'));
+document.getElementById('popFav').addEventListener('click', ()=>{
+  if (!popup._word) return;
+  toggleFavorite(popup._lang, popup._word);
+  document.getElementById('popFav').classList.toggle('fav-on', isFavorite(popup._lang, popup._word));
+});
+document.getElementById('popNoteSave').addEventListener('click', ()=>{
+  if (!popup._word) return;
+  setNote(popup._lang, popup._word, document.getElementById('popNote').value);
+  const btn = document.getElementById('popNoteSave');
+  const original = btn.textContent;
+  btn.textContent = '✓';
+  setTimeout(()=> btn.textContent = original, 900);
+});
 document.getElementById('popSpeak').addEventListener('click', ()=>{
   const w = document.getElementById('popWord').textContent;
   speak(w, currentBookLang, 0.85);
@@ -1144,7 +1205,7 @@ document.getElementById('exportBtn').addEventListener('click', async ()=>{
   const allContent = await idbGetAllContent(); // [{id, htmlChunks}, ...]
   const bookContents = {};
   allContent.forEach(rec=> bookContents[rec.id] = rec.htmlChunks);
-  const payload = { version:2, exportedAt: Date.now(), wordCounts, booksMeta, translationCache, bookContents };
+  const payload = { version:3, exportedAt: Date.now(), wordCounts, booksMeta, translationCache, bookContents, favorites, wordNotes, srsCards };
   const blob = new Blob([JSON.stringify(payload)], { type:'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1169,7 +1230,11 @@ document.getElementById('importInput').addEventListener('change', (e)=>{
       wordCounts = data.wordCounts || {};
       booksMeta = data.booksMeta || {};
       translationCache = data.translationCache || {};
-      saveCounts(); saveMeta(); saveTranslations();
+      favorites = data.favorites || {};
+      wordNotes = data.wordNotes || {};
+      srsCards = data.srsCards || {};
+      saveCounts(); saveMeta(); saveTranslations(); saveSrs();
+      DB.set('favorites', favorites); DB.set('wordNotes', wordNotes);
       const bookContents = data.bookContents || {};
       for (const [id, chunks] of Object.entries(bookContents)){
         await idbPutContent(id, chunks);

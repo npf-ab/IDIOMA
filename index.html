@@ -74,6 +74,7 @@
   #popup .row{display:flex;gap:10px;margin-top:12px;}
   #popup button{flex:1;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px;font-size:15px;}
   #popup .close{background:var(--border);color:var(--text);}
+  #popFav.fav-on{background:#ffd23f;color:#1c1c1e;}
   #loading{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
     align-items:center;justify-content:center;z-index:100;color:#fff;font-size:15px;flex-direction:column;gap:10px;}
   #loading.show{display:flex;}
@@ -177,13 +178,13 @@
         </div>
       </div>
       <div class="card">
-        <div class="biglabel">Repetición espaciada (top 3000)</div>
+        <div class="biglabel">Repetición espaciada (estilo Anki)</div>
         <div style="display:flex;gap:10px;align-items:center;">
           <select id="srsLangSelect" style="flex:1"></select>
           <button class="btn" id="openSrsBtn" style="margin-top:0;white-space:nowrap;">📇 Repasar</button>
         </div>
         <button class="btn-secondary" id="openSrsStatsBtn" style="width:100%;margin-top:10px;">📊 Ver progreso de este repaso</button>
-        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Tarjetas estilo Anki con las 3000 palabras más usadas del idioma, sin importar si ya las viste en un libro.</div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Usa tu propio diccionario cuando está disponible (más confiable); si no, cae en las 3000 palabras más usadas.</div>
       </div>
       <div class="card">
         <div class="biglabel">Practicar</div>
@@ -249,9 +250,14 @@
   <div class="row">
     <button id="popSpeak">🔊 Normal</button>
     <button id="popSpeakSlow">🐢 Despacio</button>
+    <button id="popFav" style="flex:0 0 52px;">⭐</button>
   </div>
   <div class="row" id="popSentenceRow">
     <button id="popSpeakSentence" style="flex:1">🔊 Frase completa</button>
+  </div>
+  <div class="row" style="align-items:flex-start;">
+    <textarea id="popNote" placeholder="Agregar una nota para esta palabra…" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:14px;resize:none;height:38px;font-family:inherit;"></textarea>
+    <button id="popNoteSave" style="flex:0 0 70px;">Guardar</button>
   </div>
   <div class="row">
     <button class="close" id="popClose" style="flex:1">Cerrar</button>
