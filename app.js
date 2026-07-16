@@ -937,7 +937,7 @@ document.getElementById('popSpeakSentence').addEventListener('click', ()=>{
 
 // Diccionarios de glosa en inglés (de las hojas de cálculo que me pasaste) — SOLO se usan en la
 // sección de repetición espaciada (Anki), no en la traducción de lecturas ni en modo práctica.
-const GLOSS_LANGS = ['de','fr','ja','zh','pt'];
+const GLOSS_LANGS = ['de','fr','ja','zh','pt','it'];
 const glossCache = {};
 async function loadGloss(langCode){
   if (!GLOSS_LANGS.includes(langCode)) return null;
