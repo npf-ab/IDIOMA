@@ -166,6 +166,10 @@ const vocabLangSelect = document.getElementById('vocabLangSelect');
 vocabLangSelect.innerHTML = VOCAB_LANGS.map(code=>`<option value="${code}">${LANGUAGES[code].label}</option>`).join('');
 vocabLangSelect.value = VOCAB_LANGS.includes(langSelect.value) ? langSelect.value : 'de';
 
+const dictadoLangSelect = document.getElementById('dictadoLangSelect');
+dictadoLangSelect.innerHTML = Object.entries(LANGUAGES).map(([code,l])=>`<option value="${code}">${l.label}</option>`).join('');
+dictadoLangSelect.value = langSelect.value;
+
 /* ===================== Diccionarios de idioma ===================== */
 let esSet = null; // ya no se usa para filtrar, se deja por compatibilidad si se necesita en el futuro
 const dictCache = {};
@@ -377,7 +381,8 @@ const screens = {
   srs: document.getElementById('srsScreen'),
   srsStats: document.getElementById('srsStatsScreen'),
   verbs: document.getElementById('verbsScreen'),
-  expr: document.getElementById('exprScreen')
+  expr: document.getElementById('exprScreen'),
+  dictado: document.getElementById('dictadoScreen')
 };
 const headerTitle = document.getElementById('headerTitle');
 const backBtn = document.getElementById('backBtn');
@@ -865,6 +870,109 @@ function renderExprList(lang, data){
     </div>`).join('');
   el.querySelectorAll('button[data-say]').forEach(btn=>{
     btn.addEventListener('click', ()=> speak(btn.dataset.say, lang, 0.8));
+  });
+}
+
+/* ===================== Dictado ===================== */
+// Junta oraciones "razonables" (ni muy cortas ni kilométricas) de todos los libros
+// que tengas en ese idioma, para usarlas como ejercicio de dictado.
+async function collectDictadoSentences(lang){
+  const ids = Object.keys(booksMeta).filter(id => booksMeta[id].lang === lang);
+  const seen = new Set();
+  const sentences = [];
+  for (const id of ids){
+    const chunks = await idbGetContent(id);
+    if (!chunks) continue;
+    const container = document.createElement('div');
+    container.innerHTML = chunks.join(' ');
+    container.querySelectorAll('.sentence').forEach(sEl=>{
+      const text = sEl.textContent.replace(/\s+/g, ' ').trim();
+      const len = text.length;
+      if (len < 20 || len > 160) return;
+      if (seen.has(text)) return;
+      seen.add(text);
+      sentences.push(text);
+    });
+  }
+  // barajar (Fisher-Yates) y tomar 10
+  for (let i = sentences.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [sentences[i], sentences[j]] = [sentences[j], sentences[i]];
+  }
+  return sentences.slice(0, 10);
+}
+
+let dictadoSession = { lang:'de', sentences:[], idx:0, correctCount:0 };
+
+document.getElementById('openDictadoBtn').addEventListener('click', async ()=>{
+  const lang = dictadoLangSelect.value;
+  showLoading('Buscando frases de tus libros…');
+  const sentences = await collectDictadoSentences(lang);
+  hideLoading();
+  if (sentences.length === 0){
+    alert('No encontré frases utilizables en tus libros de ' + LANGUAGES[lang].label + '. Necesitas al menos un libro importado en ese idioma con oraciones de largo normal.');
+    return;
+  }
+  dictadoSession = { lang, sentences, idx:0, correctCount:0 };
+  renderDictadoQuestion();
+  showScreen('dictado', '✍️ Dictado · ' + LANGUAGES[lang].label);
+});
+
+function normDictWord(w){ return w.toLowerCase().replace(/[.,;:!?¿¡"'«»()]/g, ''); }
+
+function diffDictado(userText, correctText){
+  const userWords = userText.trim().split(/\s+/).filter(Boolean);
+  const correctWords = correctText.trim().split(/\s+/).filter(Boolean);
+  const maxLen = Math.max(userWords.length, correctWords.length);
+  let html = '';
+  let allOk = userWords.length === correctWords.length;
+  for (let i = 0; i < maxLen; i++){
+    const uw = userWords[i];
+    const cw = correctWords[i];
+    const ok = uw !== undefined && cw !== undefined && normDictWord(uw) === normDictWord(cw);
+    if (!ok) allOk = false;
+    if (uw !== undefined) html += `<span class="${ok?'dict-ok':'dict-wrong'}">${escapeHtml(uw)}</span> `;
+  }
+  return { html, allOk };
+}
+
+function renderDictadoQuestion(){
+  const s = dictadoSession;
+  const el = document.getElementById('dictadoContent');
+  if (s.idx >= s.sentences.length){
+    el.innerHTML = `
+      <div class="empty">🎉 Terminaste: ${s.correctCount} de ${s.sentences.length} correctas.</div>
+      <button class="btn" style="width:100%" onclick="showScreen('home','Mis libros')">Volver a Libros</button>`;
+    return;
+  }
+  const sentence = s.sentences[s.idx];
+  el.innerHTML = `
+    <div class="srs-progress">Frase ${s.idx + 1} de ${s.sentences.length}</div>
+    <div class="srs-card">
+      <button class="dict-play" id="dictPlayBtn">🔊</button>
+    </div>
+    <textarea class="dict-input" id="dictInput" placeholder="Escribe lo que escuchaste…"></textarea>
+    <button class="srs-show" id="dictCheckBtn" style="margin-top:12px;">Comprobar</button>
+    <div id="dictResult" style="margin-top:16px;font-size:16px;line-height:1.6;"></div>`;
+
+  const playSentence = ()=> speak(sentence, s.lang, 0.8);
+  document.getElementById('dictPlayBtn').addEventListener('click', playSentence);
+  playSentence();
+
+  document.getElementById('dictCheckBtn').addEventListener('click', ()=>{
+    const userText = document.getElementById('dictInput').value;
+    const { html, allOk } = diffDictado(userText, sentence);
+    if (allOk) s.correctCount++;
+    document.getElementById('dictResult').innerHTML = `
+      <div style="margin-bottom:10px;">${allOk ? '✅ ¡Correcto!' : '❌ Tu respuesta:'} <br>${html}</div>
+      ${allOk ? '' : `<div style="color:var(--sub);">Frase correcta:<br><b style="color:var(--text);">${escapeHtml(sentence)}</b></div>`}
+      <button class="srs-show" id="dictNextBtn" style="margin-top:14px;">Siguiente ›</button>`;
+    document.getElementById('dictCheckBtn').style.display = 'none';
+    document.getElementById('dictInput').disabled = true;
+    document.getElementById('dictNextBtn').addEventListener('click', ()=>{
+      s.idx++;
+      renderDictadoQuestion();
+    });
   });
 }
 

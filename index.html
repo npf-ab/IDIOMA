@@ -81,6 +81,9 @@
   .spinner{width:28px;height:28px;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg)}}
   .empty{color:var(--sub);text-align:center;padding:40px 20px;font-size:14px;}
+  .section-title{font-size:15px;font-weight:700;color:var(--accent);margin:22px 16px 8px;
+    padding-top:14px;border-top:1px solid var(--border);}
+  .section-title:first-child{border-top:none;margin-top:16px;}
 
   #readerToolbar{position:sticky;top:0;z-index:10;display:flex;gap:8px;padding:8px 12px;
     background:var(--panel);border-bottom:1px solid var(--border);overflow-x:auto;}
@@ -135,6 +138,12 @@
   .expr-item .ep{font-size:15px;font-weight:600;}
   .expr-item .et{font-size:13px;color:var(--sub);}
   .expr-item button{background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 12px;flex-shrink:0;}
+
+  .dict-play{background:var(--accent);color:#fff;border:none;border-radius:50%;width:68px;height:68px;font-size:28px;}
+  .dict-input{width:100%;min-height:70px;background:var(--panel);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:10px;font-size:16px;font-family:inherit;margin-top:16px;resize:vertical;}
+  .dict-wrong{color:#ff6b6b;text-decoration:underline;}
+  .dict-ok{color:var(--text);}
 </style>
 </head>
 <body>
@@ -147,6 +156,7 @@
 
   <div id="screens">
     <div id="home" class="screen active">
+      <div class="section-title">📖 Lectura</div>
       <div class="card">
         <div class="biglabel">Idioma a detectar</div>
         <select id="langSelect"></select>
@@ -168,17 +178,13 @@
         <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra. Las ~300 palabras más comunes del idioma se marcan en azul y necesitan 20 toques para dejar de resaltarse (en vez de 13).</div>
       </div>
       <div class="card">
-        <div class="biglabel">Verbos y expresiones (alemán, francés, italiano, portugués, holandés)</div>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <select id="vocabLangSelect"></select>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:10px;">
-          <button class="btn-secondary" id="openVerbsBtn">📖 Verbos</button>
-          <button class="btn-secondary" id="openExprBtn">💬 Expresiones</button>
-        </div>
+        <div class="biglabel">Tus libros</div>
+        <div id="bookList"><div class="empty">Aún no has agregado ningún libro.</div></div>
       </div>
+
+      <div class="section-title">🔁 Repetición espaciada</div>
       <div class="card">
-        <div class="biglabel">Repetición espaciada (estilo Anki)</div>
+        <div class="biglabel">Estilo Anki</div>
         <div style="display:flex;gap:10px;align-items:center;">
           <select id="srsLangSelect" style="flex:1"></select>
           <button class="btn" id="openSrsBtn" style="margin-top:0;white-space:nowrap;">📇 Repasar</button>
@@ -187,16 +193,36 @@
         <div style="font-size:12px;color:var(--sub);margin-top:8px;">Usa tu propio diccionario cuando está disponible (más confiable); si no, cae en las 3000 palabras más usadas.</div>
       </div>
       <div class="card">
-        <div class="biglabel">Practicar</div>
+        <div class="biglabel">Practicar palabras de lectura</div>
         <div style="display:flex;gap:10px;align-items:center;">
           <select id="reviewLangFilter" style="flex:1"></select>
           <button class="btn" id="openReviewBtn" style="margin-top:0;white-space:nowrap;">🧠 Modo repaso</button>
         </div>
       </div>
+
+      <div class="section-title">🗣️ Conjugación y expresiones</div>
       <div class="card">
-        <div class="biglabel">Tus libros</div>
-        <div id="bookList"><div class="empty">Aún no has agregado ningún libro.</div></div>
+        <div class="biglabel">Alemán, francés, italiano, portugués, holandés</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="vocabLangSelect"></select>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <button class="btn-secondary" id="openVerbsBtn">📖 Verbos</button>
+          <button class="btn-secondary" id="openExprBtn">💬 Expresiones</button>
+        </div>
       </div>
+
+      <div class="section-title">✍️ Dictado</div>
+      <div class="card">
+        <div class="biglabel">Frases sacadas de tus libros</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="dictadoLangSelect" style="flex:1"></select>
+          <button class="btn" id="openDictadoBtn" style="margin-top:0;white-space:nowrap;">🎧 Empezar</button>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Escuchas una frase de tus libros y la escribes. Toma 10 frases al azar cada vez que empiezas.</div>
+      </div>
+
+      <div class="section-title">⚙️ Respaldo</div>
       <div class="card">
         <div class="biglabel">Respaldo</div>
         <div style="font-size:13px;color:var(--sub);margin-bottom:10px;">Guarda tu progreso, marcadores y libros en un archivo, o restáuralo si cambiaste de teléfono o Safari borró los datos.</div>
@@ -239,6 +265,10 @@
 
     <div id="exprScreen" class="screen">
       <div id="exprContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="dictadoScreen" class="screen">
+      <div id="dictadoContent" style="padding:16px;"></div>
     </div>
   </div>
 </div>
