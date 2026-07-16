@@ -358,6 +358,7 @@ const screens = {
   stats: document.getElementById('statsScreen'),
   review: document.getElementById('reviewScreen'),
   srs: document.getElementById('srsScreen'),
+  srsStats: document.getElementById('srsStatsScreen'),
   verbs: document.getElementById('verbsScreen'),
   expr: document.getElementById('exprScreen')
 };
@@ -599,10 +600,59 @@ let srsSession = { lang: 'de', queue: [], idx: 0, revealed: false };
 
 document.getElementById('openSrsBtn').addEventListener('click', startSrsSession);
 
+// Progreso del repaso tipo Anki — usa SOLO srsCards, nunca wordCounts (el de los libros).
+// "Madura" (dominada) = intervalo de 21+ días, como el criterio estándar de Anki.
+const SRS_MATURE_DAYS = 21;
+document.getElementById('openSrsStatsBtn').addEventListener('click', async ()=>{
+  const lang = srsLangSelect.value;
+  showLoading('Calculando progreso de ' + LANGUAGES[lang].label + '…');
+  try{
+    const dict = await loadTargetDict(lang);
+    hideLoading();
+    renderSrsStats(lang, dict);
+  } catch(err){
+    hideLoading();
+    alert('No se pudo cargar el diccionario de ' + LANGUAGES[lang].label + '.');
+    console.error(err);
+  }
+});
+
+function renderSrsStats(lang, dict){
+  const top3000 = dict.arr.slice(0, 3000);
+  const now = Date.now();
+  let notStarted=0, learning=0, mature=0, dueNow=0;
+  top3000.forEach(w=>{
+    const c = srsCards[lang + ':' + w];
+    if (!c){ notStarted++; return; }
+    if (c.interval >= SRS_MATURE_DAYS) mature++; else learning++;
+    if (c.due <= now) dueNow++;
+  });
+
+  const el = document.getElementById('srsStatsContent');
+  el.innerHTML = `
+    <div class="card" style="background:var(--panel);border-radius:14px;padding:16px;margin-bottom:14px;">
+      <div class="statrow"><span>⚪ Sin empezar</span><b>${notStarted}</b></div>
+      <div class="statrow"><span>🟡 En aprendizaje</span><b>${learning}</b></div>
+      <div class="statrow"><span>✅ Maduras (21+ días)</span><b>${mature}</b></div>
+      <div class="statrow"><span>📌 Pendientes hoy</span><b>${dueNow}</b></div>
+      <div class="statrow" style="border-bottom:none;"><span>Total del mazo</span><b>${top3000.length}</b></div>
+    </div>
+    <div style="font-size:12px;color:var(--sub);">Este progreso es solo de las tarjetas de repaso (estilo Anki) — es independiente de las palabras que resaltas al leer tus libros.</div>`;
+  showScreen('srsStats', '📊 Progreso Anki · ' + LANGUAGES[lang].label);
+}
+
 async function startSrsSession(){
   const lang = srsLangSelect.value;
   showLoading('Preparando repaso de ' + LANGUAGES[lang].label + '…');
-  const dict = await loadTargetDict(lang);
+  let dict;
+  try{
+    dict = await loadTargetDict(lang);
+  } catch(err){
+    hideLoading();
+    alert('No se pudo cargar el diccionario de ' + LANGUAGES[lang].label + '. Revisa tu conexión o que el archivo data/' + LANGUAGES[lang].file + ' esté en tu sitio.');
+    console.error(err);
+    return;
+  }
   const top3000 = dict.arr.slice(0, 3000);
 
   const now = Date.now();
@@ -660,7 +710,7 @@ async function renderSrsCard(){
     document.getElementById('srsRateRow').style.display = 'flex';
     const answerArea = document.getElementById('srsAnswerArea');
     answerArea.innerHTML = '<div class="srs-answer">Traduciendo…</div>';
-    const t = await fetchTranslationRaw(word, lang);
+    const t = await fetchSrsTranslation(word, lang);
     answerArea.innerHTML = `<div class="srs-answer">➜ ${t ? escapeHtml(t) : 'sin traducción disponible'}</div>`;
   });
 
@@ -691,10 +741,16 @@ async function loadVerbData(lang){
 document.getElementById('openVerbsBtn').addEventListener('click', async ()=>{
   const lang = vocabLangSelect.value;
   showLoading('Cargando verbos…');
-  const data = await loadVerbData(lang);
-  hideLoading();
-  renderVerbList(lang, data);
-  showScreen('verbs', '📖 Verbos · ' + LANGUAGES[lang].label);
+  try{
+    const data = await loadVerbData(lang);
+    hideLoading();
+    renderVerbList(lang, data);
+    showScreen('verbs', '📖 Verbos · ' + LANGUAGES[lang].label);
+  } catch(err){
+    hideLoading();
+    alert('No se pudieron cargar los verbos de ' + LANGUAGES[lang].label + '.\n\nFalta el archivo data/verbs-' + lang + '.json en tu sitio — revisa que lo hayas subido a GitHub.\n\nDetalle técnico: ' + err.message);
+    console.error(err);
+  }
 });
 
 function renderVerbList(lang, data){
@@ -742,10 +798,16 @@ async function loadExprData(lang){
 document.getElementById('openExprBtn').addEventListener('click', async ()=>{
   const lang = vocabLangSelect.value;
   showLoading('Cargando expresiones…');
-  const data = await loadExprData(lang);
-  hideLoading();
-  renderExprList(lang, data);
-  showScreen('expr', '💬 Expresiones · ' + LANGUAGES[lang].label);
+  try{
+    const data = await loadExprData(lang);
+    hideLoading();
+    renderExprList(lang, data);
+    showScreen('expr', '💬 Expresiones · ' + LANGUAGES[lang].label);
+  } catch(err){
+    hideLoading();
+    alert('No se pudieron cargar las expresiones de ' + LANGUAGES[lang].label + '.\n\nFalta el archivo data/expr-' + lang + '.json en tu sitio — revisa que lo hayas subido a GitHub.\n\nDetalle técnico: ' + err.message);
+    console.error(err);
+  }
 });
 
 function renderExprList(lang, data){
@@ -812,6 +874,21 @@ document.getElementById('popSpeakSentence').addEventListener('click', ()=>{
   }
 });
 
+// Diccionarios de glosa en inglés (de las hojas de cálculo que me pasaste) — SOLO se usan en la
+// sección de repetición espaciada (Anki), no en la traducción de lecturas ni en modo práctica.
+const GLOSS_LANGS = ['de','fr','ja','zh','pt'];
+const glossCache = {};
+async function loadGloss(langCode){
+  if (!GLOSS_LANGS.includes(langCode)) return null;
+  if (glossCache[langCode]) return glossCache[langCode];
+  try{
+    const data = await fetch(`data/gloss-${langCode}.json`).then(r=>r.json());
+    glossCache[langCode] = data;
+    return data;
+  } catch(e){ return null; }
+}
+
+// Traducción normal (lecturas, modo práctica) — SIN CAMBIOS respecto a como estaba.
 async function fetchTranslationRaw(key, langCode){
   const cacheKey = langCode + ':' + key;
   if (translationCache[cacheKey]) return translationCache[cacheKey];
@@ -822,6 +899,37 @@ async function fetchTranslationRaw(key, langCode){
     let translated = data && data.responseData && data.responseData.translatedText;
     if (translated){
       translated = translated.charAt(0).toLowerCase() + translated.slice(1);
+      translationCache[cacheKey] = translated;
+      saveTranslations();
+      return translated;
+    }
+  } catch(e){ /* sin conexión */ }
+  return null;
+}
+
+// Traducción SOLO para las tarjetas de Anki: usa tu diccionario de glosa en inglés cuando existe
+// (mucho más confiable), y si no hay glosa para esa palabra, cae de vuelta al traductor directo.
+async function fetchSrsTranslation(key, langCode){
+  const cacheKey = 'srs:' + langCode + ':' + key;
+  if (translationCache[cacheKey]) return translationCache[cacheKey];
+
+  const gloss = await loadGloss(langCode);
+  let queryText = key, queryLang = langCode, glossEntry = null;
+  if (gloss){
+    glossEntry = gloss[key] || gloss[key.charAt(0).toUpperCase()+key.slice(1)] || null; // alemán capitaliza sustantivos
+    if (glossEntry && glossEntry.en){
+      queryText = glossEntry.en;
+      queryLang = 'en';
+    }
+  }
+  try{
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(queryText)}&langpair=${queryLang}|es`;
+    const res = await fetch(url);
+    const data = await res.json();
+    let translated = data && data.responseData && data.responseData.translatedText;
+    if (translated){
+      translated = translated.charAt(0).toLowerCase() + translated.slice(1);
+      if (queryLang === 'en' && glossEntry) translated = `${translated} (${glossEntry.en})`;
       translationCache[cacheKey] = translated;
       saveTranslations();
       return translated;
