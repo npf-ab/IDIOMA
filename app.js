@@ -1,5 +1,6 @@
 /* ===================== Configuración de idiomas ===================== */
 const LANGUAGES = {
+  es: { label:'Español',              file:'es-words.json',    tts:'es-ES', script:'latin' },
   de: { label:'Alemán',              file:'de-words.json',    tts:'de-DE', script:'latin' },
   fr: { label:'Francés',             file:'fr-words.json',    tts:'fr-FR', script:'latin' },
   it: { label:'Italiano',            file:'it-words.json',    tts:'it-IT', script:'latin' },
@@ -532,7 +533,10 @@ async function renderStats(){
       const langLabel = (LANGUAGES[lang]||{label:lang}).label;
       const sorted = d.entries.sort((a,b)=> b[1]-a[1]);
       return `
-        <div class="biglabel" style="margin:16px 16px 6px;">${langLabel}</div>
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-right:16px;">
+          <span>${langLabel}</span>
+          <button class="btn-danger reset-lang-btn" data-lang="${lang}" style="background:none;border:1px solid var(--border);border-radius:14px;padding:4px 10px;font-size:11px;">🗑 Reiniciar solo ${langLabel}</button>
+        </div>
         <div class="card" style="background:var(--panel);border-radius:14px;padding:16px;margin:0 16px 10px;">
           <div class="statrow"><span>🔵 Comunes en progreso (&lt;20 toques)</span><b>${d.blueProgress}</b></div>
           <div class="statrow"><span>✅ Comunes dominadas (20+)</span><b>${d.blueMastered}</b></div>
@@ -552,6 +556,19 @@ async function renderStats(){
     }).join('');
     el.innerHTML = resetBtnHtml + langBlocks;
   }
+
+  document.querySelectorAll('.reset-lang-btn').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const lang = btn.dataset.lang;
+      const langLabel = (LANGUAGES[lang]||{label:lang}).label;
+      if (confirm(`Esto borra el progreso SOLO de ${langLabel} (naranja/amarillo/crema/azul). Tus libros y otros idiomas no se tocan. ¿Continuar?`)){
+        Object.keys(wordCounts).forEach(k=>{ if (k.startsWith(lang+':')) delete wordCounts[k]; });
+        saveCounts();
+        renderStats();
+      }
+    });
+  });
 
   document.getElementById('resetProgressBtn').addEventListener('click', ()=>{
     if (confirm('Esto borra el conteo de todas tus palabras vistas (naranja/amarillo/crema/azul) en todos los idiomas. Tus libros no se borran. ¿Continuar?')){
@@ -804,29 +821,55 @@ document.getElementById('openVerbsBtn').addEventListener('click', async ()=>{
 function renderVerbList(lang, data){
   const el = document.getElementById('verbsContent');
   const infinitives = Object.keys(data.verbs).sort();
-  el.innerHTML = infinitives.map(inf=>`<div class="verb-item" data-inf="${escapeHtml(inf)}">${escapeHtml(inf)}</div>`).join('');
-  el.querySelectorAll('.verb-item').forEach(item=>{
-    item.addEventListener('click', ()=> renderVerbDetail(lang, data, item.dataset.inf));
-  });
+  el.innerHTML = `
+    <input type="text" id="verbSearch" class="dict-input" style="margin-top:0;min-height:auto;padding:10px;" placeholder="🔍 Buscar verbo o traducción…">
+    <div style="font-size:12px;color:var(--sub);margin:8px 0 4px;">${infinitives.length} verbos</div>
+    <div id="verbListBody"></div>`;
+
+  const renderRows = (filter='')=>{
+    const f = filter.trim().toLowerCase();
+    const filtered = infinitives.filter(inf=>{
+      if (!f) return true;
+      const es = (data.verbs[inf].es || '').toLowerCase();
+      return inf.toLowerCase().includes(f) || es.includes(f);
+    });
+    const body = document.getElementById('verbListBody');
+    body.innerHTML = filtered.length ? filtered.map(inf=>{
+      const es = data.verbs[inf].es || '';
+      return `<div class="verb-item" data-inf="${escapeHtml(inf)}">
+        <span class="vw">${escapeHtml(inf)}</span>${es ? `<span class="vt"> — ${escapeHtml(es)}</span>` : ''}
+      </div>`;
+    }).join('') : '<div class="empty">Sin resultados.</div>';
+    body.querySelectorAll('.verb-item').forEach(item=>{
+      item.addEventListener('click', ()=> renderVerbDetail(lang, data, item.dataset.inf));
+    });
+  };
+  renderRows();
+  document.getElementById('verbSearch').addEventListener('input', (e)=> renderRows(e.target.value));
 }
 
 function renderVerbDetail(lang, data, inf){
   const el = document.getElementById('verbsContent');
   const persons = data.persons;
   const conj = data.verbs[inf];
+  const es = conj.es || '';
   const tenseBlocks = Object.keys(TENSE_LABELS).map(tense=>{
     const forms = conj[tense];
     const rows = persons.map((p,i)=> `<tr>
         <td class="pcell">${escapeHtml(p)}</td>
         <td>${escapeHtml(forms[i])} <button data-say="${escapeHtml(forms[i])}">🔊</button></td>
       </tr>`).join('');
-    return `<div class="biglabel" style="margin-top:16px;">${TENSE_LABELS[tense]}</div>
+    return `<div class="biglabel" style="margin-top:18px;">${TENSE_LABELS[tense]}</div>
       <table class="conj-table"><tbody>${rows}</tbody></table>`;
   }).join('');
 
   el.innerHTML = `
     <a class="back-link" id="verbBackLink">‹ Todos los verbos</a>
-    <div class="srs-word" style="text-align:left;">${escapeHtml(inf)} <button data-say="${escapeHtml(inf)}" style="background:none;border:none;color:var(--accent);font-size:18px;">🔊</button></div>
+    <div class="verb-detail-head">
+      <div class="srs-word" style="text-align:left;margin:0;">${escapeHtml(inf)}</div>
+      ${es ? `<div class="verb-detail-es">${escapeHtml(es)}</div>` : ''}
+      <button data-say="${escapeHtml(inf)}" class="verb-detail-play">🔊 Escuchar infinitivo</button>
+    </div>
     ${tenseBlocks}`;
   document.getElementById('verbBackLink').addEventListener('click', ()=> renderVerbList(lang, data));
   el.querySelectorAll('button[data-say]').forEach(btn=>{
@@ -860,17 +903,29 @@ document.getElementById('openExprBtn').addEventListener('click', async ()=>{
 
 function renderExprList(lang, data){
   const el = document.getElementById('exprContent');
-  el.innerHTML = data.map(item=>`
-    <div class="expr-item">
-      <div>
-        <div class="ep">${escapeHtml(item.phrase)}</div>
-        <div class="et">${escapeHtml(item.translation)}</div>
-      </div>
-      <button data-say="${escapeHtml(item.phrase)}">🔊</button>
-    </div>`).join('');
-  el.querySelectorAll('button[data-say]').forEach(btn=>{
-    btn.addEventListener('click', ()=> speak(btn.dataset.say, lang, 0.8));
-  });
+  el.innerHTML = `
+    <input type="text" id="exprSearch" class="dict-input" style="margin-top:0;min-height:auto;padding:10px;" placeholder="🔍 Buscar frase o traducción…">
+    <div id="exprListBody"></div>`;
+
+  const renderRows = (filter='')=>{
+    const f = filter.trim().toLowerCase();
+    const filtered = data.filter(item=> !f ||
+      item.phrase.toLowerCase().includes(f) || item.translation.toLowerCase().includes(f));
+    const body = document.getElementById('exprListBody');
+    body.innerHTML = filtered.length ? filtered.map(item=>`
+      <div class="expr-item">
+        <div>
+          <div class="ep">${escapeHtml(item.phrase)}</div>
+          <div class="et">${escapeHtml(item.translation)}</div>
+        </div>
+        <button data-say="${escapeHtml(item.phrase)}">🔊</button>
+      </div>`).join('') : '<div class="empty">Sin resultados.</div>';
+    body.querySelectorAll('button[data-say]').forEach(btn=>{
+      btn.addEventListener('click', ()=> speak(btn.dataset.say, lang, 0.8));
+    });
+  };
+  renderRows();
+  document.getElementById('exprSearch').addEventListener('input', (e)=> renderRows(e.target.value));
 }
 
 /* ===================== Dictado ===================== */

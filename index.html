@@ -125,8 +125,15 @@
   .srs-easy{background:#2980b9;}
   .srs-show{width:100%;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:600;}
 
-  .verb-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:16px;cursor:pointer;}
+  .verb-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:16px;cursor:pointer;
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;}
   .verb-item:last-child{border-bottom:none;}
+  .verb-item .vw{font-weight:600;}
+  .verb-item .vt{color:var(--sub);font-size:14px;}
+  .verb-detail-head{margin-bottom:6px;}
+  .verb-detail-es{color:var(--accent);font-size:16px;margin-top:2px;}
+  .verb-detail-play{background:none;border:1px solid var(--border);color:var(--text);
+    border-radius:20px;padding:6px 14px;font-size:13px;margin-top:10px;}
   .conj-table{width:100%;border-collapse:collapse;margin-top:10px;}
   .conj-table th{text-align:left;color:var(--sub);font-size:12px;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border);}
   .conj-table td{padding:6px 8px;border-bottom:1px solid var(--border);font-size:14px;}
