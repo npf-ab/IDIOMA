@@ -319,7 +319,7 @@ function buildSentenceHtml(sentence, sessionCounts, commonHits, dict, langCode, 
   return html;
 }
 
-function highlightHtmlChunk(html, sessionCounts, commonHits, dict, langCode, script){
+function highlightHtmlChunk(html, sessionCounts, commonHits, dict, langCode, script, sentenceCounter){
   const container = document.createElement('div');
   container.innerHTML = html;
   let blocks = Array.from(container.querySelectorAll(BLOCK_SELECTOR));
@@ -331,7 +331,8 @@ function highlightHtmlChunk(html, sessionCounts, commonHits, dict, langCode, scr
     const sentences = splitSentences(text);
     el.innerHTML = sentences.map(s=>{
       const inner = buildSentenceHtml(s, sessionCounts, commonHits, dict, langCode, script);
-      return `<span class="sentence">${inner}</span>`;
+      const sidx = sentenceCounter.n++;
+      return `<span class="sentence" data-sidx="${sidx}">${inner}</span>`;
     }).join('');
   });
   return container.innerHTML;
@@ -349,7 +350,8 @@ async function importEpub(file){
 
     const sessionCounts = {};
     const commonHits = new Set();
-    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, commonHits, dict, langCode, script));
+    const sentenceCounter = { n: 0 };
+    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, commonHits, dict, langCode, script, sentenceCounter));
     // Ya NO sumamos estas ocurrencias al progreso automáticamente: el conteo (y el color)
     // solo sube cuando TÚ tocas la palabra mientras lees (ver el listener de clic más abajo).
 
@@ -478,6 +480,7 @@ async function openReader(id){
   readerEl.innerHTML = chunks.join('<hr style="border:none;border-top:1px solid var(--border);margin:2em 0;">');
   readerEl.setAttribute('dir', (LANGUAGES[currentBookLang]||{}).rtl ? 'rtl' : 'ltr');
   applyHighlighting();
+  renderBookmarkFlags();
   pointerWrapped = false;
   pointerAllUnits = [];
   showScreen('reader', meta.title);
@@ -933,22 +936,35 @@ function renderExprList(lang, data){
 // que tengas en ese idioma, para usarlas como ejercicio de dictado.
 async function collectDictadoSentences(lang){
   const ids = Object.keys(booksMeta).filter(id => booksMeta[id].lang === lang);
-  const seen = new Set();
-  const sentences = [];
-  for (const id of ids){
-    const chunks = await idbGetContent(id);
-    if (!chunks) continue;
-    const container = document.createElement('div');
-    container.innerHTML = chunks.join(' ');
-    container.querySelectorAll('.sentence').forEach(sEl=>{
-      const text = sEl.textContent.replace(/\s+/g, ' ').trim();
-      const len = text.length;
-      if (len < 20 || len > 160) return;
-      if (seen.has(text)) return;
-      seen.add(text);
-      sentences.push(text);
-    });
+  const SKIP_WORDS = 1000; // se salta portada/prólogo/presentación de cada libro
+
+  async function gather(skipWords){
+    const seen = new Set();
+    const sentences = [];
+    for (const id of ids){
+      const chunks = await idbGetContent(id);
+      if (!chunks) continue;
+      const container = document.createElement('div');
+      container.innerHTML = chunks.join(' ');
+      let wordCount = 0;
+      container.querySelectorAll('.sentence').forEach(sEl=>{
+        const text = sEl.textContent.replace(/\s+/g, ' ').trim();
+        wordCount += text.split(' ').filter(Boolean).length;
+        if (wordCount < skipWords) return;
+        const len = text.length;
+        if (len < 20 || len > 160) return;
+        if (seen.has(text)) return;
+        seen.add(text);
+        sentences.push(text);
+      });
+    }
+    return sentences;
   }
+
+  let sentences = await gather(SKIP_WORDS);
+  // Si ningún libro llega a 1000 palabras (libros cortos), no saltamos nada en vez de quedarnos sin frases
+  if (sentences.length === 0) sentences = await gather(0);
+
   // barajar (Fisher-Yates) y tomar 10
   for (let i = sentences.length - 1; i > 0; i--){
     const j = Math.floor(Math.random() * (i + 1));
@@ -1184,13 +1200,42 @@ document.getElementById('bookmarkBtn').addEventListener('click', ()=>{
   if (!currentBookId) return;
   const b = booksMeta[currentBookId];
   b.bookmarks = b.bookmarks || [];
-  b.bookmarks.push({ id: 'm_'+Date.now(), scrollPos: screens.reader.scrollTop, createdAt: Date.now() });
+
+  // Buscar la primera oración visible en pantalla para "anclar" el marcador ahí
+  const readerRect = screens.reader.getBoundingClientRect();
+  const visibleSentence = Array.from(readerEl.querySelectorAll('.sentence[data-sidx]')).find(el=>{
+    const r = el.getBoundingClientRect();
+    return r.bottom > readerRect.top;
+  });
+  const sidx = visibleSentence ? visibleSentence.dataset.sidx : null;
+
+  b.bookmarks.push({ id: 'm_'+Date.now(), sidx, scrollPos: screens.reader.scrollTop, createdAt: Date.now() });
   saveMeta();
+  renderBookmarkFlags();
   const btn = document.getElementById('bookmarkBtn');
   const original = btn.textContent;
   btn.textContent = '✅ Marcado';
   setTimeout(()=> btn.textContent = original, 1200);
 });
+
+// Dibuja el 🔖 justo antes de la oración marcada, para verla al pasar por ahí leyendo
+function renderBookmarkFlags(){
+  readerEl.querySelectorAll('.bookmark-flag').forEach(f=> f.remove());
+  const b = booksMeta[currentBookId];
+  if (!b || !b.bookmarks) return;
+  b.bookmarks.forEach(m=>{
+    if (m.sidx === null || m.sidx === undefined) return;
+    const target = readerEl.querySelector(`.sentence[data-sidx="${m.sidx}"]`);
+    if (target && !target.previousElementSibling?.classList?.contains('bookmark-flag')){
+      const flag = document.createElement('span');
+      flag.className = 'bookmark-flag';
+      flag.textContent = '🔖';
+      flag.title = 'Marcador';
+      target.parentNode.insertBefore(flag, target);
+    }
+  });
+}
+
 document.getElementById('showBookmarksBtn').addEventListener('click', ()=>{
   renderBookmarksList();
   bookmarksPanel.classList.add('show');
@@ -1208,18 +1253,22 @@ function renderBookmarksList(){
   list.innerHTML = marks.slice().reverse().map(m=>{
     const date = new Date(m.createdAt).toLocaleString('es-MX', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
     return `<div class="bookmark-item">
-      <span class="go-mark" data-pos="${m.scrollPos}" style="cursor:pointer;">📍 ${date}</span>
+      <span class="go-mark" data-pos="${m.scrollPos}" data-sidx="${m.sidx ?? ''}" style="cursor:pointer;">📍 ${date}</span>
       <button class="del-mark" data-id="${m.id}">Eliminar</button>
     </div>`;
   }).join('');
   list.querySelectorAll('.go-mark').forEach(el=> el.addEventListener('click', ()=>{
-    screens.reader.scrollTop = parseInt(el.dataset.pos, 10) || 0;
+    const sidx = el.dataset.sidx;
+    const target = sidx ? readerEl.querySelector(`.sentence[data-sidx="${sidx}"]`) : null;
+    if (target) target.scrollIntoView({ block:'center' });
+    else screens.reader.scrollTop = parseInt(el.dataset.pos, 10) || 0;
     bookmarksPanel.classList.remove('show');
   }));
   list.querySelectorAll('.del-mark').forEach(el=> el.addEventListener('click', ()=>{
     b.bookmarks = b.bookmarks.filter(m=>m.id !== el.dataset.id);
     saveMeta();
     renderBookmarksList();
+    renderBookmarkFlags();
   }));
 }
 
