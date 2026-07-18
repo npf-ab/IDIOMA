@@ -252,6 +252,84 @@ async function inlineImages(doc, zip, baseDir){
   }
 }
 
+// Extrae la tabla de contenidos real del epub (EPUB3 <nav epub:type="toc"> o EPUB2 toc.ncx),
+// y la asocia al índice del capítulo (archivo) del spine al que apunta cada entrada.
+async function parseEpubToc(opfDoc, opfDir, zip, fullHrefs){
+  const entries = [];
+
+  // EPUB3: buscar el item del manifest marcado con properties="nav"
+  let navItem = null;
+  opfDoc.querySelectorAll('manifest > item').forEach(item=>{
+    const props = (item.getAttribute('properties') || '').split(/\s+/);
+    if (props.includes('nav')) navItem = item;
+  });
+
+  if (navItem){
+    try{
+      const navFullPath = opfDir + navItem.getAttribute('href');
+      const navBaseDir = navFullPath.includes('/') ? navFullPath.slice(0, navFullPath.lastIndexOf('/')+1) : '';
+      const zf = zip.file(navFullPath) || zip.file(decodeURIComponent(navFullPath));
+      if (zf){
+        const raw = await zf.async('string');
+        const navDoc = new DOMParser().parseFromString(raw, 'text/html');
+        const navEl = Array.from(navDoc.querySelectorAll('nav')).find(n=>{
+          const t = n.getAttribute('epub:type') || n.getAttribute('type') || '';
+          return t.includes('toc');
+        }) || navDoc.querySelector('nav');
+        if (navEl){
+          navEl.querySelectorAll('a[href]').forEach(a=>{
+            const t = a.textContent.replace(/\s+/g,' ').trim();
+            const href = a.getAttribute('href');
+            if (t && href) entries.push({ title: t, path: resolveRelPath(navBaseDir, href) });
+          });
+        }
+      }
+    } catch(e){ /* seguir sin índice si algo falla */ }
+  }
+
+  // EPUB2: si no encontramos nada, intentar toc.ncx
+  if (entries.length === 0){
+    try{
+      const spineEl = opfDoc.querySelector('spine');
+      const tocId = spineEl ? spineEl.getAttribute('toc') : null;
+      let ncxHref = null;
+      opfDoc.querySelectorAll('manifest > item').forEach(item=>{
+        if (tocId && item.getAttribute('id') === tocId) ncxHref = opfDir + item.getAttribute('href');
+        if (!ncxHref && (item.getAttribute('media-type')||'').includes('ncx')) ncxHref = opfDir + item.getAttribute('href');
+      });
+      if (ncxHref){
+        const zf = zip.file(ncxHref) || zip.file(decodeURIComponent(ncxHref));
+        if (zf){
+          const raw = await zf.async('string');
+          const ncxDoc = new DOMParser().parseFromString(raw, 'application/xml');
+          const baseDir = ncxHref.includes('/') ? ncxHref.slice(0, ncxHref.lastIndexOf('/')+1) : '';
+          ncxDoc.querySelectorAll('navPoint').forEach(np=>{
+            const label = np.querySelector('navLabel > text');
+            const content = np.querySelector('content');
+            if (label && content){
+              const src = content.getAttribute('src');
+              entries.push({ title: label.textContent.replace(/\s+/g,' ').trim(), path: resolveRelPath(baseDir, src) });
+            }
+          });
+        }
+      }
+    } catch(e){ /* seguir sin índice si algo falla */ }
+  }
+
+  // Asociar cada entrada al índice del capítulo (archivo) correspondiente en el spine
+  const seen = new Set();
+  return entries.map(e=>{
+    const filePart = e.path ? e.path.split('#')[0] : null;
+    const chunkIndex = fullHrefs.indexOf(filePart);
+    return { title: e.title, chunkIndex };
+  }).filter(e=>{
+    if (e.chunkIndex === -1) return false;
+    if (seen.has(e.chunkIndex)) return false; // solo la primera entrada por capítulo
+    seen.add(e.chunkIndex);
+    return true;
+  });
+}
+
 async function parseEpub(file){
   const zip = await JSZip.loadAsync(file);
   const containerXml = await zip.file('META-INF/container.xml').async('string');
@@ -271,6 +349,7 @@ async function parseEpub(file){
   });
   const spineIds = Array.from(opfDoc.querySelectorAll('spine > itemref')).map(el=>el.getAttribute('idref'));
   const hrefs = spineIds.map(id=>manifest[id]).filter(Boolean);
+  const fullHrefs = hrefs.map(h => opfDir + h);
 
   const htmlChunks = [];
   for (const href of hrefs){
@@ -284,7 +363,9 @@ async function parseEpub(file){
     const body = doc.body ? doc.body.innerHTML : raw;
     htmlChunks.push(body);
   }
-  return { title, htmlChunks };
+
+  const toc = await parseEpubToc(opfDoc, opfDir, zip, fullHrefs);
+  return { title, htmlChunks, toc };
 }
 
 /* ===================== Tokenización, oraciones, segmentación CJK y resaltado ===================== */
@@ -386,21 +467,27 @@ async function importEpub(file){
   showLoading('Leyendo el EPUB…');
   try{
     const dict = await loadTargetDict(langCode);
-    const { title, htmlChunks } = await parseEpub(file);
+    const { title, htmlChunks, toc } = await parseEpub(file);
     showLoading('Detectando palabras en ' + LANGUAGES[langCode].label + '…');
 
     const sessionCounts = {};
     const commonHits = new Set();
     const sentenceCounter = { n: 0 };
-    const processedChunks = htmlChunks.map(chunk => highlightHtmlChunk(chunk, sessionCounts, commonHits, dict, langCode, script, sentenceCounter));
+    const chunkStartSidx = [];
+    const processedChunks = htmlChunks.map(chunk => {
+      chunkStartSidx.push(sentenceCounter.n);
+      return highlightHtmlChunk(chunk, sessionCounts, commonHits, dict, langCode, script, sentenceCounter);
+    });
     // Ya NO sumamos estas ocurrencias al progreso automáticamente: el conteo (y el color)
     // solo sube cuando TÚ tocas la palabra mientras lees (ver el listener de clic más abajo).
+
+    const chapterToc = (toc || []).map(t => ({ title: t.title, startSidx: chunkStartSidx[t.chunkIndex] }));
 
     const id = 'b_' + Date.now();
     showLoading('Guardando el libro…');
     await idbPutContent(id, processedChunks);
     booksMeta[id] = {
-      title, addedAt: Date.now(), lang: langCode, scrollPos: 0, bookmarks: [],
+      title, addedAt: Date.now(), lang: langCode, scrollPos: 0, bookmarks: [], toc: chapterToc,
       uniqueWords: Object.keys(sessionCounts),      // todas las palabras distintas del libro
       commonWords: Array.from(commonHits)            // cuáles de esas son "comunes" (umbral 20)
     };
@@ -565,7 +652,7 @@ pageModeBtn.addEventListener('click', ()=>{
   DB.set('readingMode', readingMode);
   applyReadingMode();
   readerEl.scrollLeft = 0;
-  screens.reader.scrollTop = 0;
+  readerEl.scrollTop = 0;
 });
 document.getElementById('nextPageBtn').addEventListener('click', ()=>{
   readerEl.scrollBy({ left: readerEl.clientWidth, behavior:'smooth' });
@@ -576,10 +663,10 @@ document.getElementById('prevPageBtn').addEventListener('click', ()=>{
 window.addEventListener('resize', ()=>{ if (screens.reader.classList.contains('active')) applyReadingMode(); });
 
 function getReaderScrollPos(){
-  return isHorizontal() ? readerEl.scrollLeft : screens.reader.scrollTop;
+  return isHorizontal() ? readerEl.scrollLeft : readerEl.scrollTop;
 }
 function setReaderScrollPos(v){
-  if (isHorizontal()) readerEl.scrollLeft = v; else screens.reader.scrollTop = v;
+  if (isHorizontal()) readerEl.scrollLeft = v; else readerEl.scrollTop = v;
 }
 
 let scrollSaveTimer = null;
@@ -598,7 +685,7 @@ function onReaderScroll(){
     }, 150);
   }
 }
-screens.reader.addEventListener('scroll', onReaderScroll);
+// (el scroll ahora ocurre siempre dentro de #reader, no en el contenedor externo)
 readerEl.addEventListener('scroll', onReaderScroll);
 function saveCurrentScroll(){
   if (!currentBookId || !booksMeta[currentBookId]) return;
@@ -1350,6 +1437,33 @@ document.getElementById('showBookmarksBtn').addEventListener('click', ()=>{
 });
 document.getElementById('bookmarksClose').addEventListener('click', ()=> bookmarksPanel.classList.remove('show'));
 
+/* ===================== Índice de capítulos (sacado del propio epub) ===================== */
+const tocPanel = document.getElementById('tocPanel');
+document.getElementById('tocBtn').addEventListener('click', ()=>{
+  renderTocList();
+  tocPanel.classList.add('show');
+});
+document.getElementById('tocClose').addEventListener('click', ()=> tocPanel.classList.remove('show'));
+
+function renderTocList(){
+  const meta = booksMeta[currentBookId];
+  const list = document.getElementById('tocList');
+  const toc = meta && meta.toc;
+  if (!toc || toc.length === 0){
+    list.innerHTML = '<div class="empty">Este libro no trae un índice utilizable, o se importó antes de que agregara esta función (vuelve a importarlo para intentar de nuevo).</div>';
+    return;
+  }
+  list.innerHTML = toc.map((t,i)=>
+    `<div class="toc-item" data-sidx="${t.startSidx}">${escapeHtml(t.title)}</div>`).join('');
+  list.querySelectorAll('.toc-item').forEach(item=>{
+    item.addEventListener('click', ()=>{
+      const target = readerEl.querySelector(`.sentence[data-sidx="${item.dataset.sidx}"]`);
+      if (target) target.scrollIntoView({ block:'start', inline:'center' });
+      tocPanel.classList.remove('show');
+    });
+  });
+}
+
 function renderBookmarksList(){
   const b = booksMeta[currentBookId];
   const list = document.getElementById('bookmarksList');
@@ -1369,7 +1483,7 @@ function renderBookmarksList(){
     const sidx = el.dataset.sidx;
     const target = sidx ? readerEl.querySelector(`.sentence[data-sidx="${sidx}"]`) : null;
     if (target) target.scrollIntoView({ block:'center', inline:'center', behavior:'smooth' });
-    else screens.reader.scrollTop = parseInt(el.dataset.pos, 10) || 0;
+    else readerEl.scrollTop = parseInt(el.dataset.pos, 10) || 0;
     bookmarksPanel.classList.remove('show');
   }));
   list.querySelectorAll('.del-mark').forEach(el=> el.addEventListener('click', ()=>{

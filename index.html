@@ -56,7 +56,11 @@
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:6px;}
   .legend span{display:inline-flex;align-items:center;gap:5px;}
   .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
-  #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;}
+  #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;
+    flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0;}
+  #reader.paginated{max-width:none;margin:0;overflow-x:auto;overflow-y:hidden;}
+  #reader.paginated::-webkit-scrollbar{display:none;}
+  #reader.paginated{scrollbar-width:none;}
   #reader img{max-width:100%;height:auto;display:block;margin:1.2em auto;border-radius:6px;}
   #reader svg{max-width:100%;height:auto;}
   #readerScreen.active{display:flex;flex-direction:column;}
@@ -94,7 +98,7 @@
     padding-top:14px;border-top:1px solid var(--border);}
   .section-title:first-child{border-top:none;margin-top:16px;}
 
-  #readerToolbar{position:sticky;top:0;z-index:10;display:flex;gap:8px;padding:8px 12px;
+  #readerToolbar{position:sticky;top:0;z-index:10;display:flex;gap:8px;padding:8px 12px;flex-shrink:0;
     background:var(--panel);border-bottom:1px solid var(--border);overflow-x:auto;}
   #readerToolbar button{background:var(--bg);color:var(--text);border:1px solid var(--border);
     border-radius:20px;padding:7px 12px;font-size:13px;white-space:nowrap;}
@@ -117,6 +121,12 @@
     background:var(--panel);border-radius:16px;padding:16px;max-height:60vh;overflow-y:auto;
     box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;z-index:46;}
   #bookmarksPanel.show{display:block;}
+  #tocPanel{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:16px;max-height:70vh;overflow-y:auto;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;z-index:46;}
+  #tocPanel.show{display:block;}
+  .toc-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:15px;cursor:pointer;}
+  .toc-item:last-child{border-bottom:none;}
   .bookmark-item{display:flex;justify-content:space-between;align-items:center;
     padding:10px 4px;border-bottom:1px solid var(--border);font-size:14px;}
   .bookmark-item:last-child{border-bottom:none;}
@@ -257,6 +267,7 @@
         <button id="showBookmarksBtn">📑 Marcadores</button>
         <button id="pointerBtn">🎯 Puntero</button>
         <button id="pageModeBtn">📖 Modo horizontal</button>
+        <button id="tocBtn">☰ Índice</button>
       </div>
       <div id="reader"></div>
       <div id="pageNav">
@@ -333,6 +344,12 @@
   <div class="biglabel" style="margin-bottom:10px;">Marcadores</div>
   <div id="bookmarksList"></div>
   <button class="close" id="bookmarksClose" style="width:100%;background:var(--border);color:var(--text);border:none;border-radius:10px;padding:10px;margin-top:10px;">Cerrar</button>
+</div>
+
+<div id="tocPanel">
+  <div class="biglabel" style="margin-bottom:10px;">Índice</div>
+  <div id="tocList"></div>
+  <button class="close" id="tocClose" style="width:100%;background:var(--border);color:var(--text);border:none;border-radius:10px;padding:10px;margin-top:10px;">Cerrar</button>
 </div>
 
 <div id="loading"><div class="spinner"></div><div id="loadingText">Procesando…</div></div>
