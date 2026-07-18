@@ -1,4 +1,4 @@
-const CACHE = 'lector-de-v24';
+const CACHE = 'lector-de-v25';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
   './data/es-words.json', './data/de-words.json', './data/fr-words.json', './data/it-words.json',
@@ -25,7 +25,23 @@ self.addEventListener('activate', e=>{
   self.clients.claim();
 });
 
+const CORE_FILES = ['./', './index.html', './app.js', './manifest.json', './service-worker.js'];
+
 self.addEventListener('fetch', e=>{
+  const isCore = CORE_FILES.some(f => e.request.url.endsWith(f.replace('./','/')) || e.request.url.endsWith(f));
+  if (isCore){
+    // Red primero: así el HTML/JS principal siempre se actualiza si hay internet,
+    // y solo usa la copia guardada si estás sin conexión.
+    e.respondWith(
+      fetch(e.request).then(res=>{
+        const copy = res.clone();
+        caches.open(CACHE).then(c=>c.put(e.request, copy)).catch(()=>{});
+        return res;
+      }).catch(()=> caches.match(e.request))
+    );
+    return;
+  }
+  // El resto (diccionarios, verbos, etc.) casi no cambian: caché primero, más rápido y funciona offline.
   e.respondWith(
     caches.match(e.request).then(cached=> cached || fetch(e.request).then(res=>{
       const copy = res.clone();
