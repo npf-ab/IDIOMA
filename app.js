@@ -613,77 +613,23 @@ async function openReader(id){
   pointerAllUnits = [];
   showScreen('reader', meta.title);
   requestAnimationFrame(()=>{
-    applyReadingMode();
     setReaderScrollPos(meta.scrollPos || 0);
   });
 }
 
-/* ===================== Modo de lectura: vertical (scroll) u horizontal (paginado) ===================== */
-let readingMode = DB.get('readingMode', 'vertical');
-const pageModeBtn = document.getElementById('pageModeBtn');
-const pageNav = document.getElementById('pageNav');
-
-function isHorizontal(){ return readingMode === 'horizontal'; }
-
-function applyReadingMode(){
-  const toolbar = document.getElementById('readerToolbar');
-  if (isHorizontal()){
-    const h = screens.reader.clientHeight - toolbar.offsetHeight;
-    readerEl.classList.add('paginated');
-    readerEl.style.height = h + 'px';
-    readerEl.style.columnWidth = screens.reader.clientWidth + 'px';
-    readerEl.style.columnGap = '0px';
-    pageNav.classList.add('show');
-    pageModeBtn.textContent = '📜 Modo vertical';
-    pageModeBtn.classList.add('on');
-  } else {
-    readerEl.classList.remove('paginated');
-    readerEl.style.height = '';
-    readerEl.style.columnWidth = '';
-    readerEl.style.columnGap = '';
-    pageNav.classList.remove('show');
-    pageModeBtn.textContent = '📖 Modo horizontal';
-    pageModeBtn.classList.remove('on');
-  }
-}
-
-pageModeBtn.addEventListener('click', ()=>{
-  readingMode = isHorizontal() ? 'vertical' : 'horizontal';
-  DB.set('readingMode', readingMode);
-  applyReadingMode();
-  readerEl.scrollLeft = 0;
-  readerEl.scrollTop = 0;
-});
-document.getElementById('nextPageBtn').addEventListener('click', ()=>{
-  readerEl.scrollBy({ left: readerEl.clientWidth, behavior:'smooth' });
-});
-document.getElementById('prevPageBtn').addEventListener('click', ()=>{
-  readerEl.scrollBy({ left: -readerEl.clientWidth, behavior:'smooth' });
-});
-window.addEventListener('resize', ()=>{ if (screens.reader.classList.contains('active')) applyReadingMode(); });
-
+/* ===================== Modo de lectura: vertical (scroll) ===================== */
 function getReaderScrollPos(){
-  return isHorizontal() ? readerEl.scrollLeft : readerEl.scrollTop;
+  return readerEl.scrollTop;
 }
 function setReaderScrollPos(v){
-  if (isHorizontal()) readerEl.scrollLeft = v; else readerEl.scrollTop = v;
+  readerEl.scrollTop = v;
 }
 
 let scrollSaveTimer = null;
-let pageSnapTimer = null;
 function onReaderScroll(){
   if (!currentBookId) return;
   clearTimeout(scrollSaveTimer);
   scrollSaveTimer = setTimeout(saveCurrentScroll, 400);
-  if (isHorizontal()){
-    clearTimeout(pageSnapTimer);
-    pageSnapTimer = setTimeout(()=>{
-      const w = readerEl.clientWidth;
-      if (!w) return;
-      const target = Math.round(readerEl.scrollLeft / w) * w;
-      if (Math.abs(target - readerEl.scrollLeft) > 2) readerEl.scrollTo({ left: target, behavior:'smooth' });
-    }, 150);
-  }
 }
 // (el scroll ahora ocurre siempre dentro de #reader, no en el contenedor externo)
 readerEl.addEventListener('scroll', onReaderScroll);
@@ -1400,7 +1346,7 @@ document.getElementById('bookmarkBtn').addEventListener('click', ()=>{
   const readerRect = screens.reader.getBoundingClientRect();
   const visibleSentence = Array.from(readerEl.querySelectorAll('.sentence[data-sidx]')).find(el=>{
     const r = el.getBoundingClientRect();
-    return isHorizontal() ? r.right > readerRect.left : r.bottom > readerRect.top;
+    return r.bottom > readerRect.top;
   });
   const sidx = visibleSentence ? visibleSentence.dataset.sidx : null;
 
@@ -1594,7 +1540,7 @@ function startPointerFromView(){
   // Empieza en la primera palabra visible desde arriba (o desde la izquierda, en modo horizontal)
   let startIdx = pointerAllUnits.findIndex(el=>{
     const r = el.getBoundingClientRect();
-    return isHorizontal() ? r.right > readerRect.left : r.bottom > readerRect.top;
+    return r.bottom > readerRect.top;
   });
   if (startIdx === -1) startIdx = 0;
 
