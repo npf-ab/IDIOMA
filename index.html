@@ -57,6 +57,15 @@
   .legend span{display:inline-flex;align-items:center;gap:5px;}
   .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
   #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;}
+  #reader img{max-width:100%;height:auto;display:block;margin:1.2em auto;border-radius:6px;}
+  #reader svg{max-width:100%;height:auto;}
+  #readerScreen{display:flex;flex-direction:column;}
+  #reader.paginated{column-fill:auto;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;}
+  #pageNav{display:none;position:fixed;left:0;right:0;bottom:0;justify-content:space-between;
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom));pointer-events:none;}
+  #pageNav button{pointer-events:auto;background:var(--panel);color:var(--text);border:1px solid var(--border);
+    border-radius:50%;width:46px;height:46px;font-size:20px;opacity:.85;}
+  #pageNav.show{display:flex;}
   #reader p{margin:0 0 1em;}
   .w-de{border-radius:4px;padding:1px 2px;cursor:pointer;}
   .lvl-1{background:var(--orange);color:#1c1c1e;}
@@ -247,8 +256,13 @@
         <button id="bookmarkBtn">🔖 Marcar</button>
         <button id="showBookmarksBtn">📑 Marcadores</button>
         <button id="pointerBtn">🎯 Puntero</button>
+        <button id="pageModeBtn">📖 Modo horizontal</button>
       </div>
       <div id="reader"></div>
+      <div id="pageNav">
+        <button id="prevPageBtn">‹</button>
+        <button id="nextPageBtn">›</button>
+      </div>
     </div>
 
     <div id="statsScreen" class="screen">

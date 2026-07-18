@@ -213,6 +213,45 @@ async function ensureDictsFor(langs){
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ===================== Parseo del EPUB ===================== */
+const IMG_MIME = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', svg:'image/svg+xml', webp:'image/webp', bmp:'image/bmp' };
+
+function resolveRelPath(baseDir, relPath){
+  relPath = relPath.split('#')[0]; // quitar ancla si la hay
+  if (/^https?:\/\//.test(relPath) || relPath.startsWith('data:')) return null;
+  if (relPath.startsWith('/')) relPath = relPath.slice(1);
+  const parts = (baseDir + relPath).split('/');
+  const stack = [];
+  for (const p of parts){
+    if (p === '..') stack.pop();
+    else if (p === '' || p === '.') continue;
+    else stack.push(p);
+  }
+  return stack.join('/');
+}
+
+// Convierte cada <img>/<image> del capítulo a data-uri base64, para que las imágenes
+// del epub se vean sin depender de archivos externos.
+async function inlineImages(doc, zip, baseDir){
+  const nodes = Array.from(doc.querySelectorAll('img, image'));
+  for (const node of nodes){
+    const isSvgImage = node.tagName.toLowerCase() === 'image';
+    const srcAttr = isSvgImage ? (node.getAttribute('xlink:href') || node.getAttribute('href')) : node.getAttribute('src');
+    if (!srcAttr || srcAttr.startsWith('data:')) continue;
+    const path = resolveRelPath(baseDir, srcAttr);
+    if (!path) continue;
+    const zf = zip.file(path) || zip.file(decodeURIComponent(path));
+    if (!zf) continue;
+    try{
+      const ext = (path.split('.').pop() || '').toLowerCase();
+      const mime = IMG_MIME[ext] || 'image/jpeg';
+      const base64 = await zf.async('base64');
+      const dataUri = `data:${mime};base64,${base64}`;
+      if (isSvgImage){ node.setAttribute('xlink:href', dataUri); node.setAttribute('href', dataUri); }
+      else node.setAttribute('src', dataUri);
+    } catch(e){ /* si una imagen falla, seguimos sin ella */ }
+  }
+}
+
 async function parseEpub(file){
   const zip = await JSZip.loadAsync(file);
   const containerXml = await zip.file('META-INF/container.xml').async('string');
@@ -240,6 +279,8 @@ async function parseEpub(file){
     if (!zf) continue;
     const raw = await zf.async('string');
     const doc = new DOMParser().parseFromString(raw, 'text/html');
+    const baseDir = fullPath.includes('/') ? fullPath.slice(0, fullPath.lastIndexOf('/')+1) : '';
+    await inlineImages(doc, zip, baseDir);
     const body = doc.body ? doc.body.innerHTML : raw;
     htmlChunks.push(body);
   }
@@ -484,20 +525,87 @@ async function openReader(id){
   pointerWrapped = false;
   pointerAllUnits = [];
   showScreen('reader', meta.title);
-  requestAnimationFrame(()=>{ screens.reader.scrollTop = meta.scrollPos || 0; });
+  requestAnimationFrame(()=>{
+    applyReadingMode();
+    setReaderScrollPos(meta.scrollPos || 0);
+  });
+}
+
+/* ===================== Modo de lectura: vertical (scroll) u horizontal (paginado) ===================== */
+let readingMode = DB.get('readingMode', 'vertical');
+const pageModeBtn = document.getElementById('pageModeBtn');
+const pageNav = document.getElementById('pageNav');
+
+function isHorizontal(){ return readingMode === 'horizontal'; }
+
+function applyReadingMode(){
+  const toolbar = document.getElementById('readerToolbar');
+  if (isHorizontal()){
+    const h = screens.reader.clientHeight - toolbar.offsetHeight;
+    readerEl.classList.add('paginated');
+    readerEl.style.height = h + 'px';
+    readerEl.style.columnWidth = screens.reader.clientWidth + 'px';
+    readerEl.style.columnGap = '0px';
+    pageNav.classList.add('show');
+    pageModeBtn.textContent = '📜 Modo vertical';
+    pageModeBtn.classList.add('on');
+  } else {
+    readerEl.classList.remove('paginated');
+    readerEl.style.height = '';
+    readerEl.style.columnWidth = '';
+    readerEl.style.columnGap = '';
+    pageNav.classList.remove('show');
+    pageModeBtn.textContent = '📖 Modo horizontal';
+    pageModeBtn.classList.remove('on');
+  }
+}
+
+pageModeBtn.addEventListener('click', ()=>{
+  readingMode = isHorizontal() ? 'vertical' : 'horizontal';
+  DB.set('readingMode', readingMode);
+  applyReadingMode();
+  readerEl.scrollLeft = 0;
+  screens.reader.scrollTop = 0;
+});
+document.getElementById('nextPageBtn').addEventListener('click', ()=>{
+  readerEl.scrollBy({ left: readerEl.clientWidth, behavior:'smooth' });
+});
+document.getElementById('prevPageBtn').addEventListener('click', ()=>{
+  readerEl.scrollBy({ left: -readerEl.clientWidth, behavior:'smooth' });
+});
+window.addEventListener('resize', ()=>{ if (screens.reader.classList.contains('active')) applyReadingMode(); });
+
+function getReaderScrollPos(){
+  return isHorizontal() ? readerEl.scrollLeft : screens.reader.scrollTop;
+}
+function setReaderScrollPos(v){
+  if (isHorizontal()) readerEl.scrollLeft = v; else screens.reader.scrollTop = v;
 }
 
 let scrollSaveTimer = null;
-screens.reader.addEventListener('scroll', ()=>{
+let pageSnapTimer = null;
+function onReaderScroll(){
   if (!currentBookId) return;
   clearTimeout(scrollSaveTimer);
   scrollSaveTimer = setTimeout(saveCurrentScroll, 400);
-});
+  if (isHorizontal()){
+    clearTimeout(pageSnapTimer);
+    pageSnapTimer = setTimeout(()=>{
+      const w = readerEl.clientWidth;
+      if (!w) return;
+      const target = Math.round(readerEl.scrollLeft / w) * w;
+      if (Math.abs(target - readerEl.scrollLeft) > 2) readerEl.scrollTo({ left: target, behavior:'smooth' });
+    }, 150);
+  }
+}
+screens.reader.addEventListener('scroll', onReaderScroll);
+readerEl.addEventListener('scroll', onReaderScroll);
 function saveCurrentScroll(){
   if (!currentBookId || !booksMeta[currentBookId]) return;
-  booksMeta[currentBookId].scrollPos = screens.reader.scrollTop;
+  booksMeta[currentBookId].scrollPos = getReaderScrollPos();
   saveMeta();
 }
+
 
 /* ===================== Estadísticas ===================== */
 async function renderStats(){
@@ -1205,11 +1313,11 @@ document.getElementById('bookmarkBtn').addEventListener('click', ()=>{
   const readerRect = screens.reader.getBoundingClientRect();
   const visibleSentence = Array.from(readerEl.querySelectorAll('.sentence[data-sidx]')).find(el=>{
     const r = el.getBoundingClientRect();
-    return r.bottom > readerRect.top;
+    return isHorizontal() ? r.right > readerRect.left : r.bottom > readerRect.top;
   });
   const sidx = visibleSentence ? visibleSentence.dataset.sidx : null;
 
-  b.bookmarks.push({ id: 'm_'+Date.now(), sidx, scrollPos: screens.reader.scrollTop, createdAt: Date.now() });
+  b.bookmarks.push({ id: 'm_'+Date.now(), sidx, scrollPos: getReaderScrollPos(), createdAt: Date.now() });
   saveMeta();
   renderBookmarkFlags();
   const btn = document.getElementById('bookmarkBtn');
@@ -1260,7 +1368,7 @@ function renderBookmarksList(){
   list.querySelectorAll('.go-mark').forEach(el=> el.addEventListener('click', ()=>{
     const sidx = el.dataset.sidx;
     const target = sidx ? readerEl.querySelector(`.sentence[data-sidx="${sidx}"]`) : null;
-    if (target) target.scrollIntoView({ block:'center' });
+    if (target) target.scrollIntoView({ block:'center', inline:'center', behavior:'smooth' });
     else screens.reader.scrollTop = parseInt(el.dataset.pos, 10) || 0;
     bookmarksPanel.classList.remove('show');
   }));
@@ -1369,10 +1477,10 @@ function startPointerFromView(){
     return;
   }
   const readerRect = screens.reader.getBoundingClientRect();
-  // Empieza en la primera palabra visible desde arriba de la pantalla actual
+  // Empieza en la primera palabra visible desde arriba (o desde la izquierda, en modo horizontal)
   let startIdx = pointerAllUnits.findIndex(el=>{
     const r = el.getBoundingClientRect();
-    return r.bottom > readerRect.top;
+    return isHorizontal() ? r.right > readerRect.left : r.bottom > readerRect.top;
   });
   if (startIdx === -1) startIdx = 0;
 
@@ -1389,7 +1497,7 @@ function stepPointer(){
   const el = pointerAllUnits[pointerIdx];
   el.classList.add('pointer-current');
   pointerCurrentEl = el;
-  el.scrollIntoView({ block:'center', behavior:'smooth' });
+  el.scrollIntoView({ block:'center', inline:'center', behavior:'smooth' });
   pointerIdx += 1;
 
   const ppm = parseInt(pointerSpeed.value, 10) || 220;
