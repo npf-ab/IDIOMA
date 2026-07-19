@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1c1c1e">
+<title>Lector de Alemán</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#1c1c1e; --panel:#2c2c2e; --text:#f2f2f7; --sub:#9a9aa2;
+    --accent:#5e9eff; --orange:#ff9f43; --yellow:#ffe08a; --cream:#f4ead0;
+    --border:#3a3a3c;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;}
+  #app{display:flex;flex-direction:column;height:100dvh;}
+  header{padding:14px 16px calc(10px + env(safe-area-inset-top)/3);
+    display:flex;align-items:center;justify-content:space-between;
+    border-bottom:1px solid var(--border);background:var(--panel);
+    padding-top:calc(env(safe-area-inset-top) + 10px);}
+  header h1{font-size:17px;font-weight:600;margin:0;}
+  header button{background:none;border:none;color:var(--accent);font-size:15px;padding:4px 8px;}
+  #screens{flex:1;overflow:hidden;position:relative;}
+  .screen{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;}
+  .screen.active{display:block;}
+  #home{padding:20px 16px 40px;}
+  .card{background:var(--panel);border-radius:14px;padding:18px;margin-bottom:14px;}
+  .biglabel{font-size:13px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+  #dropzone{border:2px dashed var(--border);border-radius:14px;padding:30px 16px;text-align:center;color:var(--sub);}
+  #dropzone.drag{border-color:var(--accent);color:var(--accent);}
+  input[type=file]{display:none;}
+  .btn{display:inline-block;background:var(--accent);color:#fff;border:none;
+    border-radius:12px;padding:12px 20px;font-size:16px;font-weight:600;margin-top:12px;}
+  select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:12px;font-size:16px;-webkit-appearance:none;appearance:none;}
+  .book-lang-tag{display:inline-block;font-size:11px;background:var(--border);color:var(--sub);
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
+  .action-row{display:flex;gap:10px;margin-bottom:14px;}
+  .btn-secondary{flex:1;background:var(--panel);color:var(--accent);border:1px solid var(--border);
+    border-radius:12px;padding:12px 8px;font-size:14px;font-weight:600;}
+  .btn-danger{color:#ff6b6b;}
+  .review-item{background:var(--panel);border-radius:12px;padding:14px 16px;margin-bottom:10px;
+    display:flex;justify-content:space-between;align-items:center;}
+  .review-item .rw{font-size:16px;font-weight:600;}
+  .review-item .rmeta{font-size:12px;color:var(--sub);margin-top:2px;}
+  .booklist-item{display:flex;justify-content:space-between;align-items:center;
+    padding:12px 4px;border-bottom:1px solid var(--border);}
+  .booklist-item:last-child{border-bottom:none;}
+  .booklist-item .title{font-size:15px;}
+  .booklist-item .meta{font-size:12px;color:var(--sub);}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:6px;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+  #reader{padding:18px 18px 60px;font-size:19px;line-height:1.75;max-width:700px;margin:0 auto;
+    flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0;}
+  #reader img{max-width:100%;height:auto;display:block;margin:1.2em auto;border-radius:6px;}
+  #reader svg{max-width:100%;height:auto;}
+  #readerScreen.active{display:flex;flex-direction:column;overflow:hidden;}
+  #reader p{margin:0 0 1em;}
+  .w-de{border-radius:4px;padding:1px 2px;cursor:pointer;}
+  .lvl-1{background:var(--orange);color:#1c1c1e;}
+  .lvl-2{background:var(--yellow);color:#1c1c1e;}
+  .lvl-3{background:var(--cream);color:#1c1c1e;}
+  .lvl-blue{background:var(--accent);color:#fff;}
+  #stats{padding:16px;}
+  .statrow{display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border);font-size:15px;}
+  #popup{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.5);
+    display:none;z-index:50;}
+  #popup.show{display:block;}
+  #popup .word{font-size:22px;font-weight:700;}
+  #popup .count{color:var(--sub);font-size:13px;margin-top:2px;}
+  #popup .row{display:flex;gap:10px;margin-top:12px;}
+  #popup button{flex:1;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px;font-size:15px;}
+  #popup .close{background:var(--border);color:var(--text);}
+  #popFav.fav-on{background:#ffd23f;color:#1c1c1e;}
+  #loading{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+    align-items:center;justify-content:center;z-index:100;color:#fff;font-size:15px;flex-direction:column;gap:10px;}
+  #loading.show{display:flex;}
+  .spinner{width:28px;height:28px;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty{color:var(--sub);text-align:center;padding:40px 20px;font-size:14px;}
+  .section-title{font-size:15px;font-weight:700;color:var(--accent);margin:22px 16px 8px;
+    padding-top:14px;border-top:1px solid var(--border);}
+  .section-title:first-child{border-top:none;margin-top:16px;}
+
+  #readerToolbar{position:sticky;top:0;z-index:10;display:flex;gap:8px;padding:8px 12px;flex-shrink:0;
+    background:var(--panel);border-bottom:1px solid var(--border);overflow-x:auto;}
+  #readerToolbar button{background:var(--bg);color:var(--text);border:1px solid var(--border);
+    border-radius:20px;padding:7px 12px;font-size:13px;white-space:nowrap;}
+  #readerToolbar button.on{background:var(--accent);color:#fff;border-color:var(--accent);}
+  #reader[dir="rtl"]{direction:rtl;text-align:right;}
+  .w-de.pointer-current, .ptr-word.pointer-current{outline:3px solid var(--accent);outline-offset:1px;border-radius:3px;}
+  .bookmark-flag{display:inline-block;margin-right:4px;user-select:none;}
+
+  #pointerBar{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.5);
+    display:none;z-index:45;}
+  #pointerBar.show{display:block;}
+  #pointerBar .prow{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  #pointerBar label{font-size:13px;color:var(--sub);white-space:nowrap;}
+  #pointerBar input[type=range]{flex:1;}
+  #pointerBar .prow button{flex:1;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px;font-size:15px;}
+  #pointerBar .stop{background:var(--border);color:var(--text);}
+
+  #bookmarksPanel{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:16px;max-height:60vh;overflow-y:auto;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;z-index:46;}
+  #bookmarksPanel.show{display:block;}
+  #tocPanel{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--panel);border-radius:16px;padding:16px;max-height:70vh;overflow-y:auto;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;z-index:46;}
+  #tocPanel.show{display:block;}
+  .toc-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:15px;cursor:pointer;}
+  .toc-item:last-child{border-bottom:none;}
+  .bookmark-item{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 4px;border-bottom:1px solid var(--border);font-size:14px;}
+  .bookmark-item:last-child{border-bottom:none;}
+  .bookmark-item button{background:none;border:none;color:#ff6b6b;font-size:13px;}
+
+  .srs-card{background:var(--panel);border-radius:16px;padding:40px 20px;text-align:center;margin-bottom:20px;min-height:180px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  .srs-word{font-size:28px;font-weight:700;margin-bottom:10px;}
+  .srs-answer{font-size:18px;color:var(--accent);margin-top:14px;}
+  .srs-progress{font-size:13px;color:var(--sub);text-align:center;margin-bottom:10px;}
+  .srs-rate-row{display:flex;gap:8px;}
+  .srs-rate-row button{flex:1;border:none;border-radius:12px;padding:14px 6px;font-size:14px;font-weight:600;color:#fff;}
+  .srs-again{background:#e74c3c;}
+  .srs-hard{background:#e67e22;}
+  .srs-good{background:#27ae60;}
+  .srs-easy{background:#2980b9;}
+  .srs-show{width:100%;background:var(--accent);color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:600;}
+
+  .verb-item{padding:12px 4px;border-bottom:1px solid var(--border);font-size:16px;cursor:pointer;
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;}
+  .verb-item:last-child{border-bottom:none;}
+  .verb-item .vw{font-weight:600;}
+  .verb-item .vt{color:var(--sub);font-size:14px;}
+  .verb-detail-head{margin-bottom:6px;}
+  .verb-detail-es{color:var(--accent);font-size:16px;margin-top:2px;}
+  .verb-detail-play{background:none;border:1px solid var(--border);color:var(--text);
+    border-radius:20px;padding:6px 14px;font-size:13px;margin-top:10px;}
+  .conj-table{width:100%;border-collapse:collapse;margin-top:10px;}
+  .conj-table th{text-align:left;color:var(--sub);font-size:12px;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border);}
+  .conj-table td{padding:6px 8px;border-bottom:1px solid var(--border);font-size:14px;}
+  .conj-table .pcell{color:var(--sub);width:80px;}
+  .conj-table td button{background:none;border:none;color:var(--accent);font-size:14px;padding:2px 6px;}
+  .back-link{color:var(--accent);font-size:14px;margin-bottom:12px;display:inline-block;}
+  .expr-item{padding:12px 4px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .expr-item:last-child{border-bottom:none;}
+  .expr-item .ep{font-size:15px;font-weight:600;}
+  .expr-item .et{font-size:13px;color:var(--sub);}
+  .expr-item button{background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 12px;flex-shrink:0;}
+
+  .level-card{background:var(--panel);border-radius:14px;margin-bottom:12px;overflow:hidden;}
+  .level-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;cursor:pointer;}
+  .level-head .lname{font-size:16px;font-weight:700;}
+  .level-head .lsub{font-size:12px;color:var(--sub);font-weight:400;margin-left:6px;}
+  .level-progress{font-size:13px;color:var(--accent);font-weight:600;}
+  .level-topics{padding:0 16px 12px;display:none;}
+  .level-card.open .level-topics{display:block;}
+  .level-topic{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--border);font-size:14px;}
+  .level-topic input{margin-top:3px;width:18px;height:18px;flex-shrink:0;}
+  .level-topic.done{color:var(--sub);text-decoration:line-through;}
+  .level-bar{height:5px;background:var(--border);border-radius:3px;margin:0 16px 14px;overflow:hidden;}
+  .level-bar-fill{height:100%;background:var(--accent);}
+
+  .dict-play{background:var(--accent);color:#fff;border:none;border-radius:50%;width:68px;height:68px;font-size:28px;}
+  .dict-input{width:100%;min-height:70px;background:var(--panel);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:10px;font-size:16px;font-family:inherit;margin-top:16px;resize:vertical;}
+  .dict-wrong{color:#ff6b6b;text-decoration:underline;}
+  .dict-ok{color:var(--text);}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="backBtn" style="visibility:hidden">‹ Libros</button>
+    <h1 id="headerTitle">Mis libros</h1>
+    <button id="statsBtn">Progreso</button>
+  </header>
+
+  <div id="screens">
+    <div id="home" class="screen active">
+      <div class="section-title">📖 Lectura</div>
+      <div class="card">
+        <div class="biglabel">Idioma a detectar</div>
+        <select id="langSelect"></select>
+      </div>
+      <div class="card">
+        <div class="biglabel">Agregar un EPUB</div>
+        <div id="dropzone">
+          <div>Toca para elegir un archivo .epub</div>
+          <label class="btn" for="fileInput">Elegir archivo</label>
+          <input type="file" id="fileInput" accept=".epub,application/epub+zip">
+        </div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--accent)"></i>Palabra común (hasta 20 toques)</span>
+          <span><i class="dot" style="background:var(--orange)"></i>Nueva (0-1 veces)</span>
+          <span><i class="dot" style="background:var(--yellow)"></i>2-6 veces</span>
+          <span><i class="dot" style="background:var(--cream)"></i>7-12 veces</span>
+          <span>13+ (o 20+ si es común) = dominada, sin resaltar</span>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:6px;">💡 El color solo sube cuando TOCAS la palabra. Las ~300 palabras más comunes del idioma se marcan en azul y necesitan 20 toques para dejar de resaltarse (en vez de 13).</div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Tus libros</div>
+        <div id="bookList"><div class="empty">Aún no has agregado ningún libro.</div></div>
+      </div>
+
+      <div class="section-title">🔁 Repetición espaciada</div>
+      <div class="card">
+        <div class="biglabel">Estilo Anki</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="srsLangSelect" style="flex:1"></select>
+          <button class="btn" id="openSrsBtn" style="margin-top:0;white-space:nowrap;">📇 Repasar</button>
+        </div>
+        <button class="btn-secondary" id="openSrsStatsBtn" style="width:100%;margin-top:10px;">📊 Ver progreso de este repaso</button>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Usa tu propio diccionario cuando está disponible (más confiable); si no, cae en las 3000 palabras más usadas.</div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Practicar palabras de lectura</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="reviewLangFilter" style="flex:1"></select>
+          <button class="btn" id="openReviewBtn" style="margin-top:0;white-space:nowrap;">🧠 Modo repaso</button>
+        </div>
+      </div>
+
+      <div class="section-title">🗣️ Conjugación y expresiones</div>
+      <div class="card">
+        <div class="biglabel">Alemán, francés, italiano, portugués, holandés</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="vocabLangSelect"></select>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <button class="btn-secondary" id="openVerbsBtn">📖 Verbos</button>
+          <button class="btn-secondary" id="openExprBtn">💬 Expresiones</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="biglabel">Niveles (MCER / HSK / JLPT)</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="frameworkLangSelect"></select>
+          <button class="btn" id="openFrameworkBtn" style="margin-top:0;white-space:nowrap;">🎯 Ver niveles</button>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Ve marcando los temas que ya dominas de cada nivel (alemán/francés/italiano: MCER · chino: HSK · japonés: JLPT).</div>
+      </div>
+
+      <div class="section-title">✍️ Dictado</div>
+      <div class="card">
+        <div class="biglabel">Frases sacadas de tus libros</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="dictadoLangSelect" style="flex:1"></select>
+          <button class="btn" id="openDictadoBtn" style="margin-top:0;white-space:nowrap;">🎧 Empezar</button>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Escuchas una frase de tus libros y la escribes. Toma 10 frases al azar cada vez que empiezas.</div>
+      </div>
+
+      <div class="section-title">⚙️ Respaldo</div>
+      <div class="card">
+        <div class="biglabel">Respaldo</div>
+        <div style="font-size:13px;color:var(--sub);margin-bottom:10px;">Guarda tu progreso, marcadores y libros en un archivo, o restáuralo si cambiaste de teléfono o Safari borró los datos.</div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn-secondary" id="exportBtn">⬇️ Exportar todo</button>
+          <label class="btn-secondary" for="importInput" style="text-align:center;cursor:pointer;">⬆️ Importar</label>
+          <input type="file" id="importInput" accept="application/json" style="display:none;">
+        </div>
+      </div>
+    </div>
+
+    <div id="readerScreen" class="screen">
+      <div id="readerToolbar">
+        <button id="bookmarkBtn">🔖 Marcar</button>
+        <button id="showBookmarksBtn">📑 Marcadores</button>
+        <button id="pointerBtn">🎯 Puntero</button>
+        <button id="tocBtn">☰ Índice</button>
+      </div>
+      <div id="reader"></div>
+    </div>
+
+    <div id="statsScreen" class="screen">
+      <div id="stats"></div>
+    </div>
+
+    <div id="reviewScreen" class="screen">
+      <div id="reviewList" style="padding:16px;"></div>
+    </div>
+
+    <div id="srsScreen" class="screen">
+      <div id="srsContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="srsStatsScreen" class="screen">
+      <div id="srsStatsContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="verbsScreen" class="screen">
+      <div id="verbsContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="exprScreen" class="screen">
+      <div id="exprContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="dictadoScreen" class="screen">
+      <div id="dictadoContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="frameworkScreen" class="screen">
+      <div id="frameworkContent" style="padding:16px;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="popup">
+  <div class="word" id="popWord"></div>
+  <div class="count" id="popCount"></div>
+  <div class="count" id="popTranslation">Traduciendo…</div>
+  <div class="row">
+    <button id="popSpeak">🔊 Normal</button>
+    <button id="popSpeakSlow">🐢 Despacio</button>
+    <button id="popFav" style="flex:0 0 52px;">⭐</button>
+  </div>
+  <div class="row" id="popSentenceRow">
+    <button id="popSpeakSentence" style="flex:1">🔊 Frase completa</button>
+  </div>
+  <div class="row" style="align-items:flex-start;">
+    <textarea id="popNote" placeholder="Agregar una nota para esta palabra…" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px;font-size:14px;resize:none;height:38px;font-family:inherit;"></textarea>
+    <button id="popNoteSave" style="flex:0 0 70px;">Guardar</button>
+  </div>
+  <div class="row">
+    <button class="close" id="popClose" style="flex:1">Cerrar</button>
+  </div>
+</div>
+
+<div id="pointerBar">
+  <div style="font-size:12px;color:var(--sub);margin-bottom:10px;">👆 Toca cualquier palabra del texto para que el puntero empiece a leer justo desde ahí. (Solo resalta visualmente, sin voz.)</div>
+  <div class="prow">
+    <label>Velocidad</label>
+    <input type="range" id="pointerSpeed" min="80" max="400" value="220" step="10">
+    <label id="pointerSpeedLabel">220 ppm</label>
+  </div>
+  <div class="prow">
+    <button id="pointerPlayPause">▶️ Iniciar en esta página</button>
+    <button class="stop" id="pointerStop">✕ Detener</button>
+  </div>
+</div>
+
+<div id="bookmarksPanel">
+  <div class="biglabel" style="margin-bottom:10px;">Marcadores</div>
+  <div id="bookmarksList"></div>
+  <button class="close" id="bookmarksClose" style="width:100%;background:var(--border);color:var(--text);border:none;border-radius:10px;padding:10px;margin-top:10px;">Cerrar</button>
+</div>
+
+<div id="tocPanel">
+  <div class="biglabel" style="margin-bottom:10px;">Índice</div>
+  <div id="tocList"></div>
+  <button class="close" id="tocClose" style="width:100%;background:var(--border);color:var(--text);border:none;border-radius:10px;padding:10px;margin-top:10px;">Cerrar</button>
+</div>
+
+<div id="loading"><div class="spinner"></div><div id="loadingText">Procesando…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
