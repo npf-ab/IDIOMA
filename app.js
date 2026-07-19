@@ -171,6 +171,12 @@ const dictadoLangSelect = document.getElementById('dictadoLangSelect');
 dictadoLangSelect.innerHTML = Object.entries(LANGUAGES).map(([code,l])=>`<option value="${code}">${l.label}</option>`).join('');
 dictadoLangSelect.value = langSelect.value;
 
+// Marco de referencia (MCER/HSK/JLPT) solo existe para estos 5 idiomas
+const FRAMEWORK_LANGS = ['de','fr','it','zh','ja'];
+const frameworkLangSelect = document.getElementById('frameworkLangSelect');
+frameworkLangSelect.innerHTML = FRAMEWORK_LANGS.map(code=>`<option value="${code}">${LANGUAGES[code].label}</option>`).join('');
+frameworkLangSelect.value = FRAMEWORK_LANGS.includes(langSelect.value) ? langSelect.value : 'de';
+
 /* ===================== Diccionarios de idioma ===================== */
 let esSet = null; // ya no se usa para filtrar, se deja por compatibilidad si se necesita en el futuro
 const dictCache = {};
@@ -513,7 +519,8 @@ const screens = {
   srsStats: document.getElementById('srsStatsScreen'),
   verbs: document.getElementById('verbsScreen'),
   expr: document.getElementById('exprScreen'),
-  dictado: document.getElementById('dictadoScreen')
+  dictado: document.getElementById('dictadoScreen'),
+  framework: document.getElementById('frameworkScreen')
 };
 const headerTitle = document.getElementById('headerTitle');
 const backBtn = document.getElementById('backBtn');
@@ -1188,7 +1195,78 @@ function renderDictadoQuestion(){
   });
 }
 
-/* ===================== Popup de palabra: traducción + pronunciación ===================== */
+/* ===================== Niveles: MCER / HSK / JLPT ===================== */
+let frameworksData = null;
+async function loadFrameworks(){
+  if (frameworksData) return frameworksData;
+  frameworksData = await fetch('data/frameworks.json').then(r=>r.json());
+  return frameworksData;
+}
+
+let frameworkProgress = DB.get('frameworkProgress', {}); // { "lang:LEVEL:idx": true }
+function isTopicDone(lang, levelCode, idx){ return !!frameworkProgress[`${lang}:${levelCode}:${idx}`]; }
+function toggleTopicDone(lang, levelCode, idx){
+  const key = `${lang}:${levelCode}:${idx}`;
+  if (frameworkProgress[key]) delete frameworkProgress[key]; else frameworkProgress[key] = true;
+  DB.set('frameworkProgress', frameworkProgress);
+}
+
+document.getElementById('openFrameworkBtn').addEventListener('click', async ()=>{
+  const lang = frameworkLangSelect.value;
+  showLoading('Cargando niveles…');
+  try{
+    const all = await loadFrameworks();
+    hideLoading();
+    renderFrameworkScreen(lang, all[lang]);
+    showScreen('framework', '🎯 ' + all[lang].framework + ' · ' + LANGUAGES[lang].label);
+  } catch(err){
+    hideLoading();
+    alert('No se pudieron cargar los niveles. Revisa que data/frameworks.json esté en tu sitio.');
+    console.error(err);
+  }
+});
+
+function renderFrameworkScreen(lang, info){
+  const el = document.getElementById('frameworkContent');
+  el.innerHTML = info.levels.map(level=>{
+    const total = level.topics.length;
+    const done = level.topics.filter((_,i)=> isTopicDone(lang, level.code, i)).length;
+    const pct = Math.round(100*done/total);
+    return `
+      <div class="level-card" data-level="${level.code}">
+        <div class="level-head">
+          <div><span class="lname">${level.code}</span><span class="lsub">${escapeHtml(level.name)}</span></div>
+          <div class="level-progress">${done}/${total}</div>
+        </div>
+        <div class="level-bar"><div class="level-bar-fill" style="width:${pct}%"></div></div>
+        <div class="level-topics">
+          ${level.topics.map((t,i)=>`
+            <label class="level-topic ${isTopicDone(lang, level.code, i)?'done':''}">
+              <input type="checkbox" data-idx="${i}" ${isTopicDone(lang, level.code, i)?'checked':''}>
+              <span>${escapeHtml(t)}</span>
+            </label>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.querySelectorAll('.level-card').forEach(card=>{
+    card.querySelector('.level-head').addEventListener('click', ()=> card.classList.toggle('open'));
+    card.querySelectorAll('.level-topic input').forEach(cb=>{
+      cb.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        const levelCode = card.dataset.level;
+        const idx = parseInt(cb.dataset.idx, 10);
+        toggleTopicDone(lang, levelCode, idx);
+        // refrescar solo esta tarjeta de nivel (contador, barra y tachado) sin cerrar el acordeón
+        const wasOpen = card.classList.contains('open');
+        renderFrameworkScreen(lang, info);
+        if (wasOpen) document.querySelector(`.level-card[data-level="${levelCode}"]`).classList.add('open');
+      });
+    });
+  });
+}
+
+
 const popup = document.getElementById('popup');
 let lastSpokenText = '', lastSpokenLang = 'de';
 

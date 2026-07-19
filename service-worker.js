@@ -1,4 +1,4 @@
-const CACHE = 'lector-de-v28';
+const CACHE = 'lector-de-v29';
 const ASSETS = [
   './', './index.html', './app.js', './manifest.json',
   './data/es-words.json', './data/de-words.json', './data/fr-words.json', './data/it-words.json',
@@ -6,6 +6,7 @@ const ASSETS = [
   './data/ko-words.json', './data/he-words.json', './data/fa-words.json',
   './data/zh-words.json', './data/ja-words.json',
   './data/gloss-de.json', './data/gloss-fr.json', './data/gloss-ja.json', './data/gloss-zh.json', './data/gloss-pt.json', './data/gloss-it.json',
+  './data/frameworks.json',
   './data/verbs-de.json', './data/verbs-fr.json', './data/verbs-it.json',
   './data/verbs-pt.json', './data/verbs-nl.json',
   './data/expr-de.json', './data/expr-fr.json', './data/expr-it.json',

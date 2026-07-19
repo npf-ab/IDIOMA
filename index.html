@@ -157,6 +157,19 @@
   .expr-item .et{font-size:13px;color:var(--sub);}
   .expr-item button{background:var(--accent);color:#fff;border:none;border-radius:20px;padding:8px 12px;flex-shrink:0;}
 
+  .level-card{background:var(--panel);border-radius:14px;margin-bottom:12px;overflow:hidden;}
+  .level-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;cursor:pointer;}
+  .level-head .lname{font-size:16px;font-weight:700;}
+  .level-head .lsub{font-size:12px;color:var(--sub);font-weight:400;margin-left:6px;}
+  .level-progress{font-size:13px;color:var(--accent);font-weight:600;}
+  .level-topics{padding:0 16px 12px;display:none;}
+  .level-card.open .level-topics{display:block;}
+  .level-topic{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--border);font-size:14px;}
+  .level-topic input{margin-top:3px;width:18px;height:18px;flex-shrink:0;}
+  .level-topic.done{color:var(--sub);text-decoration:line-through;}
+  .level-bar{height:5px;background:var(--border);border-radius:3px;margin:0 16px 14px;overflow:hidden;}
+  .level-bar-fill{height:100%;background:var(--accent);}
+
   .dict-play{background:var(--accent);color:#fff;border:none;border-radius:50%;width:68px;height:68px;font-size:28px;}
   .dict-input{width:100%;min-height:70px;background:var(--panel);color:var(--text);border:1px solid var(--border);
     border-radius:10px;padding:10px;font-size:16px;font-family:inherit;margin-top:16px;resize:vertical;}
@@ -229,6 +242,14 @@
           <button class="btn-secondary" id="openExprBtn">💬 Expresiones</button>
         </div>
       </div>
+      <div class="card">
+        <div class="biglabel">Niveles (MCER / HSK / JLPT)</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select id="frameworkLangSelect"></select>
+          <button class="btn" id="openFrameworkBtn" style="margin-top:0;white-space:nowrap;">🎯 Ver niveles</button>
+        </div>
+        <div style="font-size:12px;color:var(--sub);margin-top:8px;">Ve marcando los temas que ya dominas de cada nivel (alemán/francés/italiano: MCER · chino: HSK · japonés: JLPT).</div>
+      </div>
 
       <div class="section-title">✍️ Dictado</div>
       <div class="card">
@@ -288,6 +309,10 @@
 
     <div id="dictadoScreen" class="screen">
       <div id="dictadoContent" style="padding:16px;"></div>
+    </div>
+
+    <div id="frameworkScreen" class="screen">
+      <div id="frameworkContent" style="padding:16px;"></div>
     </div>
   </div>
 </div>
